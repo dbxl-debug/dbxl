@@ -267,13 +267,22 @@ Startup state: Locals, Callers, Commands and Source open; everything else as chi
 unmapped until there is a message.
 
 ### 5.4 Glyphs (`xtk/glyphs.c`)
-Bitmaps are extracted from the recon screenshots at 1:1 and stored as C arrays:
-- execution arrow (black, `#000001` outline), drawn **over** the first columns of the line;
-- stop sign: 11x12 solid octagon `#fa1340` (*[obs p2]*);
-- disabled stop sign: 1px hollow octagon `#000001` (*[obs p3]*);
-- pointer: 16x16 white-body/black-outline arrow, hotspot (1,1) (*[obs p6]*, bitmap in the doc);
-- scroll arrows, busy pointer, bug icon (the icon partly recovered in `bug_200125e8.png`),
-  conditional stop sign (not yet observed; `cond.png` is a placeholder).
+All bitmaps are recovered exactly from xldb's PutImage requests *[obs p10]* (bits in
+`recon/xtrace/bitmaps-decoded.txt`) and stored as C arrays:
+- **execution arrow** 32x16 (outer + inner shapes) at (2, line top). **Stop sign** 11x11
+  (outer octagon, inner octagon) at (2, line top + 1), with fill `#fa1340`. **Disabled stop
+  sign**: the same shapes with the background as fill. Stop sign first, arrow over it.
+- xldb composites each glyph with three GCs (AndInverted to clear, Or with plane-mask 1 to
+  make the `#000001` ring, Or to add the fill) *[obs p10]*. dbxl reproduces the resulting
+  pixels (ring `#000001`, arrow interior `#000000`, fill colour) with ordinary drawing, since
+  plane-mask tricks don't carry over to the scaled surfaces. In `-bw`/`-wb` the colours come
+  from the scheme (§11).
+- **pointer** 16x16, hotspot (1,1), white/black. **busy pointer**: a stopwatch 16x16, hotspot
+  (7,2), white only (mask = source), set on the frame while xldb works. **Icon**: the 64x64
+  bug via `WM_HINTS`.
+- **move/resize cursors** from the X cursor font: `fleur` while moving, then the matching
+  `*_side`/`*_corner` shape once an edge follows the pointer.
+- The conditional stop sign is not yet observed (`cond.png` is only a placeholder).
 
 ## 6. Text formats (core/format.c)
 
@@ -506,8 +515,9 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
    | Mono border and scrollbar colours | **done** *[obs p8]* (see below) | M2 |
    | Size from the Window Control menu | **done** *[obs p8]*: sizing mode, press+drag moves edges on the pointer's side by the drag delta, release applies | M2 |
    | Right-drag move/resize zones | **done** *[obs p9]*: 3x3 thirds grid (see §4) | M2 |
-   | Exact bitmaps (pointer, busy cursor, bug icon, glyphs) | open: capture PutImage data with a byte-level proxy (`socat -x`) *[obs p9]* | M2 |
-   | Busy pointer | partly: a 16x16 bitmap cursor with hotspot (7,2) is created at startup *[obs p9]*. Needs a capture while running | M3 |
+   | Exact bitmaps (pointer, busy cursor, bug icon, glyphs) | **done** *[obs p10]* (§5.4) | M2 |
+   | Horizontal scrollbars | **done** *[obs p10]*: mirror the vertical bar; neither bar shortens; vertical is created first | M2 |
+   | Busy pointer | **done** *[obs p10]*: stopwatch, used while xldb works | M3 |
    | Conditional stop sign, Formats window | open | M5 |
    | Signal command, `-q`, core files (`-co`) | open | M6 |
 
