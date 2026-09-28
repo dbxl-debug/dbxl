@@ -297,12 +297,12 @@ All observed *[obs p2-p5]*. These are the rules the value formatter must reprodu
 | signed integers | always signed: `+0`, `+123456789`, `-3` |
 | unsigned char / unsigned | `129` (no sign) |
 | char | C literal: `'b'`, `'\0'` |
-| float / double | shortest scientific: `2.5e-1`, `1.5e+0` |
+| float / double | 6 (float) or 15 (double) significant digits, trailing zeros stripped but at least one decimal. Scientific (default): `2.5e-1`, `1.23457e+6`, `0.0`. Decimal style: fixed for exponents -5..6 (`0.00001`, `1234570.0`), else scientific *[obs p13]* |
 | enum | enumerator name `GREEN` |
 | pointer | `ptr`; `<null>` if 0; after `more`: `->shape{}`; style string: `"hello, world"` |
-| array (collapsed) | `[]`; one level: `[ elem elem ]`; more: one element per line `[ 0]: ...` |
-| struct (collapsed) | `tag{}`; expanded `{ v v v }` with **no field names**; `flatten` expands all |
-| wrap | continuation lines indented to align after `name: [ ` / `{ ` |
+| array (collapsed) | `[]`; one level: `[ elem elem ]` (10 elements per line); more: one element per line `[ 0]: ...` |
+| struct (collapsed) | `tag{}`; `more`: inline `{ v v v }` without field names; `more` again: vertical, one `field: value` per line; `flatten` expands all inline *[obs p13]* |
+| wrap | structural only: inline arrays break every 10 elements, continuation indented after `name: [ `; lines never rewrap to the pane width, they are cut off *[obs p13]* |
 | Globals header | `----- File rich.c -----`, blank line, then values |
 | Monitor | `----- Globals -----`, blank, `----- Locals -----`, values |
 | Callers | `main()`, `__start()`; selected frame cyan |
@@ -500,11 +500,18 @@ Each pane is a `textpane` (list of styled lines + hit-test) plus a click handler
   Esc = cancel.
 
 ## 9. Variable menus
-List-box menus at a fixed frame position (observed at (338,143), ~205x463), 1px white border,
-title = kind (`int`, `char`, `array`, `structure`, `pointer`). Section headers in menuInfo
-colour. One item pre-highlighted (the current style for scalars, `more` for array/pointer,
-`flatten` for structs). Item lists per kind are exactly as recorded in *[obs p3, p4]*.
-Styles and detail levels are stored per value path, so they survive stepping and re-expansion.
+*[obs p3, p4, p13]* The variable menu is **a pane**: one 201x460 window with a 2px border at
+frame (336,141), created at startup, drawn like any pane (title bar with the type name, 25
+column padded rows at baselines 24+13n, section headers in menuInfo grey, the highlighted
+item as a cyan bar), with the same active/idle border and move/resize gestures. Its geometry
+persists, and the Edit and trigger dialogs (400x60) open at its current position.
+Opening saves the area under it, maps it and warps the pointer to (4,32). Choosing an item
+closes it, warps the pointer back to the click that opened it and restores the area. A click
+elsewhere closes it. It stays open when the pointer leaves, and headers don't respond.
+The highlighted item is the last one chosen if present, else the last chosen in this menu
+kind. Item lists per kind (integers, float/double, pointer, array, structure) are in
+recon pass 13. Styles and detail levels are stored per variable (value path) and shared by
+Locals, Globals and Monitor, so they survive stepping, re-expansion and Restart.
 
 ## 10. Help text
 `help/dbxl.help` is **dbxl's own text**, organised like xldb's help (same section numbering,
