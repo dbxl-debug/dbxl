@@ -556,6 +556,7 @@ so the heading it names (section number optional, case ignored) is the top row. 
 | cannot debug dynamically linked programs on AIX 4.3 | not applicable |
 | Restart after the program died of a signal leaves no process (`Function source is not available...`) *[obs p17]* | restarts normally |
 | Globals opened after termination briefly shows 0xff garbage (`ratio: -NaNQ`) *[obs p17]* | shows it empty |
+| core-file Disassembly shows `00000000` words (text isn't in the core) *[obs p17]* | the executable's instructions |
 
 ## 12. Open questions
 1. ~~Mono-scheme glyphs~~ **Decided** (2026-09-27): derive them from the scheme colours, see §11.
@@ -577,7 +578,7 @@ so the heading it names (section number optional, case ignored) is the top row. 
    | Source scroll after a trigger: the line goes 5 rows above the bottom, not past the end | **done** *[obs p16]* | M5b |
    | First `more` on an object goes to detail 2 whatever Detail per click is | **done** *[obs p16]* | M5b |
    | Signal command, termination state, `-q`, `-r`, `-c`, `-e`, `-i`, justification/style/limit resources, user-command prompt | **done** *[obs p17]* | M6 |
-   | Core files (`-co`): the guest writes light cores that xldb can't read; needs root (`fullcore`) | blocked | M6 |
+   | Core files (`-co`): Commands without Alt keys, `Program terminated by signal`, edits refused, breakpoints allowed | **done** *[obs p17]* | M6 |
    | Attach (`-a`), fork/multiprocess, normal exit: fail on the emulator | not observable | M6 (from the help) |
    | Edit input checked against the style (hint message, prompt again) | **done** *[obs p15]* | M5b |
    | Select subrange, Cast (`Select new base type`), Function parameter message; Downcast/Show self are C++ only | **done** *[obs p15]* | M5b |
@@ -644,9 +645,13 @@ so the heading it names (section number optional, case ignored) is the top row. 
    - **User commands:** `Name=func()` opens `Enter function parameter (in hex)` prefilled
      with the Function parameter address, then calls `func(addr)` (GDB `call`); null rows
      beep.
-   - **Core files and attach** (`-co`, `-a`): from the help plus GDB (`core-file`,
-     `attach`); Commands in core mode shows only Edit, Exit, Options, Help, and storage
-     changes are refused with xldb's catalogue messages. Detach on Exit after `-a`.
+   - **Core files** (`-co`, GDB `core-file`): a stopped display at the failing line with
+     `Program terminated by signal %s.`; Commands shows only Edit, Exit, Options, Help with no
+     Alt keys; variable Edit refused at once (`Modification not allowed with core files`),
+     Storage edits on commit (`Storage modification not allowed with core files`);
+     breakpoints, frame selection, Globals and Storage work. Disassembly shows the
+     executable's code (xldb shows zeros).
+   - **Attach** (`-a`, GDB `attach`), from the help: detach on Exit so the process resumes.
    - Fork handling (Multiprocess debugging, Fork path) via GDB `follow-fork-mode` /
      `detach-on-fork`, from the help.
    - Then evaluate an LLDB backend (separately).
