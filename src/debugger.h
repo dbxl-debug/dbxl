@@ -27,6 +27,8 @@ bool dbxl_debug_active(void);
 void dbxl_debug_command(enum dbxl_action action);
 /* A left click on Source line `line` (1-based): toggle a breakpoint. */
 void dbxl_debug_source_click(int line);
+/* A left click on Callers line `level`: show that frame. */
+void dbxl_debug_select_frame(int level);
 /* The Breakpoint dialog: a breakpoint at a function's entry. */
 void dbxl_debug_break_function(const char *name);
 

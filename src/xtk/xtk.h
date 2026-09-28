@@ -44,6 +44,10 @@ enum xtk_scheme {
     XTK_SCHEME_WB       /* -wb: white on black */
 };
 
+typedef struct xtk_point {
+    int x, y;
+} xtk_point;
+
 typedef struct xtk_rect {
     int x, y, w, h;
 } xtk_rect;
@@ -176,6 +180,9 @@ int xtk_pane_top(const xtk_pane *p);
 /* Margin glyphs per line: stop sign or disabled stop sign, then the arrow. */
 enum { XTK_MARK_STOP = 1, XTK_MARK_STOP_DISABLED = 2, XTK_MARK_ARROW = 4 };
 void xtk_pane_set_marks(xtk_pane *p, const unsigned char *marks, int n);
+/* Per-line text roles: XTK_ROLE_INFO draws a line in the menuInfo colour. */
+enum { XTK_ROLE_NORMAL = 0, XTK_ROLE_INFO = 1 };
+void xtk_pane_set_line_roles(xtk_pane *p, const unsigned char *roles, int n);
 void xtk_pane_map(xtk_pane *p);
 void xtk_pane_unmap(xtk_pane *p);
 bool xtk_pane_mapped(const xtk_pane *p);
@@ -265,6 +272,11 @@ void xtk_dialog_prompt(const char *message, const char *initial,
                        const char *b1, const char *b2,
                        int anchor_x, int anchor_y,
                        xtk_dialog_fn fn, void *arg);
+/* The compact prompt: 400 x 60 with its outer corner at frame (x, y). */
+void xtk_dialog_prompt_at(const char *message, const char *initial,
+                          const char *b1, const char *b2, int x, int y,
+                          int anchor_x, int anchor_y,
+                          xtk_dialog_fn fn, void *arg);
 bool xtk_dialog_handle_event(const XEvent *ev);
 bool xtk_dialog_active(void);
 

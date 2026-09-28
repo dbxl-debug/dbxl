@@ -65,7 +65,8 @@ class Driver:
         time.sleep(0.3)
 
     def type(self, text):
-        names = {':': 'colon', '/': 'slash', '.': 'period', ' ': 'space'}
+        names = {':': 'colon', '/': 'slash', '.': 'period', ' ': 'space',
+                 '-': 'minus'}
         for ch in text:
             self.key(names.get(ch, ch))
         time.sleep(self.wait)

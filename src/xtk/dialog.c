@@ -6,7 +6,11 @@
  * frame's vertical middle; message centred left of the buttons at baseline
  * 21 and a text field (w - 96) x 13 at (9, 36).
  *
- * Both have a 2px border in the dialog foreground and two 64 x 13 buttons
+ * Compact prompt (the Edit dialog, recon pass 13): 400 x 60 at a given
+ * frame position (the variable menu's), a prompt's field and baseline 21,
+ * but the message centred by pixels like a confirm.
+ *
+ * All have a 2px border in the dialog foreground and two 64 x 13 buttons
  * with a 1px border at (w - 75, 9) and (w - 75, 36), their labels centred
  * at baseline 11.  Opening warps the pointer onto the first button at
  * (61, 10); closing warps it back to the anchor (the click that opened
@@ -29,6 +33,7 @@ struct part {
 static struct dialog {
     bool open;
     bool prompt;
+    bool compact;
     struct part box, b1, b2, field;
     char *message, *l1, *l2;
     xtk_lineedit le;
@@ -79,7 +84,7 @@ static void draw_box(void)
      * file name"), a confirm by pixels rounding half up (98 for "Exit from
      * xldb?").
      */
-    if (dlg.prompt) {
+    if (dlg.prompt && !dlg.compact) {
         int cols = (dlg.box.w - 85) / m->char_w;
         x = (cols - len) / 2 * m->char_w;
     } else {
@@ -98,21 +103,22 @@ static void draw_field(void)
     xtk_surface_present(&dlg.field.surf);
 }
 
-static void open_dialog(bool prompt, const char *message, const char *initial,
-                        const char *b1, const char *b2, int ax, int ay,
-                        xtk_dialog_fn fn, void *arg)
+static void open_dialog(bool prompt, const xtk_point *at, const char *message,
+                        const char *initial, const char *b1, const char *b2,
+                        int ax, int ay, xtk_dialog_fn fn, void *arg)
 {
     Display *dpy = xtk_dpy();
     int fw = xtk_frame_w(), fh = xtk_frame_h();
-    int w = prompt ? fw : 400, h = 60;
-    int x = prompt ? 0 : (fw - w) / 2;
-    int y = prompt ? fh / 2 : (fh - h) / 2;
+    int w = prompt && !at ? fw : 400, h = 60;
+    int x = at ? at->x : prompt ? 0 : (fw - w) / 2;
+    int y = at ? at->y : prompt ? fh / 2 : (fh - h) / 2;
 
     if (dlg.open)
         return;
     memset(&dlg, 0, sizeof dlg);
     dlg.open = true;
     dlg.prompt = prompt;
+    dlg.compact = at != NULL;
     dlg.message = strdup(message);
     dlg.l1 = strdup(b1);
     dlg.l2 = strdup(b2);
@@ -143,14 +149,23 @@ static void open_dialog(bool prompt, const char *message, const char *initial,
 void xtk_dialog_confirm(const char *message, const char *b1, const char *b2,
                         int ax, int ay, xtk_dialog_fn fn, void *arg)
 {
-    open_dialog(false, message, NULL, b1, b2, ax, ay, fn, arg);
+    open_dialog(false, NULL, message, NULL, b1, b2, ax, ay, fn, arg);
 }
 
 void xtk_dialog_prompt(const char *message, const char *initial,
                        const char *b1, const char *b2, int ax, int ay,
                        xtk_dialog_fn fn, void *arg)
 {
-    open_dialog(true, message, initial, b1, b2, ax, ay, fn, arg);
+    open_dialog(true, NULL, message, initial, b1, b2, ax, ay, fn, arg);
+}
+
+void xtk_dialog_prompt_at(const char *message, const char *initial,
+                          const char *b1, const char *b2, int x, int y,
+                          int ax, int ay, xtk_dialog_fn fn, void *arg)
+{
+    xtk_point at = { x, y };
+
+    open_dialog(true, &at, message, initial, b1, b2, ax, ay, fn, arg);
 }
 
 bool xtk_dialog_active(void)

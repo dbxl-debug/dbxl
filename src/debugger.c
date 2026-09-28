@@ -20,6 +20,7 @@
 #include "core/layout.h"
 #include "core/options.h"
 #include "core/source.h"
+#include "data.h"
 #include "debugger.h"
 #include "ui.h"
 #include "xtk/xtk.h"
@@ -54,6 +55,8 @@ static struct {
     struct bp bps[MAX_BPS];
     int nbps;
     int click_line;               /* line of the pending toggle */
+    dbg_frame *frames;            /* the stack, for Callers selection */
+    int nframes;
     char func[256];               /* name of the pending function bp */
 } dbg;
 
@@ -164,7 +167,12 @@ static void update_marks(void)
     free(marks);
 }
 
-static void show_source(const dbg_frame *f)
+/*
+ * Show a frame's file.  At a stop the arrow goes on its line; for a frame
+ * selected in Callers the arrow stays at the stop (if that is in the same
+ * file) and the frame's line gets the cyan bar (recon pass 13).
+ */
+static void show_source(const dbg_frame *f, bool stop)
 {
     xtk_pane *p = pane(DBXL_W_SOURCE);
     char path[1024];
@@ -183,6 +191,8 @@ static void show_source(const dbg_frame *f)
                            dbg.src->nlines);
         title = dbg.src->path;
         dbg.arrow = f->line;
+        if (!stop)
+            dbg.arrow = strcmp(dbg.frame.file, f->file) == 0 ? dbg.frame.line : 0;
     } else {
         /*
          * No source: xldb titles the pane with the file name it has (for
@@ -198,8 +208,10 @@ static void show_source(const dbg_frame *f)
                             "search path.");
     }
     xtk_pane_set_title(p, title);
+    xtk_pane_set_selected(p, stop || !dbg.src ? -1 : f->line - 1);
     {
-        int top = dbg.arrow - 1 - xtk_pane_rows(p) / 2;
+        int centre = stop || !dbg.src ? dbg.arrow : f->line;
+        int top = centre - 1 - xtk_pane_rows(p) / 2;
         xtk_pane_set_top(p, top > 0 ? top : 0);
     }
     update_marks();
@@ -292,8 +304,9 @@ static void on_stopped(const dbg_event *ev)
 
     set_state(ST_STOPPED);
     dbg.frame = ev->frame;
-    show_source(&ev->frame);
+    show_source(&ev->frame, true);
     locals_title(&ev->frame);
+    dbxl_data_refresh(ev->frame.file[0] ? ev->frame.func : "", 0);
     dbg.b->ops->frames(dbg.b, MAX_CALLERS);
     switch (ev->reason) {
     case DBG_STOP_BREAKPOINT:
@@ -335,6 +348,10 @@ static void on_error(const dbg_event *ev)
         break;
     case DBG_REQ_BP_DELETE:
     case DBG_REQ_FRAMES:
+    case DBG_REQ_VALUES:
+        break;
+    case DBG_REQ_ASSIGN:
+        error_message(ev->message);
         break;
     case DBG_REQ_START:
         /* The program could not be loaded; what follows fails too. */
@@ -372,6 +389,8 @@ static void on_event(const dbg_event *ev, void *arg)
         set_state(ST_EXITED);
         clear_arrow();
         show_callers(NULL, 0);
+        dbg.nframes = 0;
+        dbxl_data_clear_locals();
         snprintf(msg, sizeof msg, "Program exited with return code %d.",
                  ev->exit_code);
         dbxl_ui_message(msg);
@@ -380,12 +399,25 @@ static void on_event(const dbg_event *ev, void *arg)
         set_state(ST_EXITED);
         clear_arrow();
         show_callers(NULL, 0);
+        dbg.nframes = 0;
+        dbxl_data_clear_locals();
         dbg_signal_text(0, ev->signame, sig, sizeof sig);
         snprintf(msg, sizeof msg, "Program terminated by signal %s.", sig);
         dbxl_ui_message(msg);
         break;
     case DBG_EV_FRAMES:
+        free(dbg.frames);
+        dbg.frames = calloc((size_t)(ev->nframes ? ev->nframes : 1),
+                            sizeof *dbg.frames);
+        memcpy(dbg.frames, ev->frames, (size_t)ev->nframes * sizeof *dbg.frames);
+        dbg.nframes = ev->nframes;
         show_callers(ev->frames, ev->nframes);
+        break;
+    case DBG_EV_VALUES:
+        dbxl_data_values(ev->values);
+        break;
+    case DBG_EV_ASSIGNED:
+        dbxl_data_assigned();
         break;
     case DBG_EV_BP_SET:
         on_bp_set(ev);
@@ -453,6 +485,7 @@ void dbxl_debug_init(const struct dbxl_debug_config *cfg)
     l.run_to = cfg->run_to ? cfg->run_to : "main";
     l.tty = tty;
     dbg.b = dbg_gdbmi_create(on_event, NULL);
+    dbxl_data_set_backend(dbg.b);
     set_state(ST_STARTING);
     if (dbg_start(dbg.b, &l) < 0) {
         set_state(ST_DEAD);
@@ -467,6 +500,7 @@ void dbxl_debug_shutdown(void)
 {
     if (!dbg.b)
         return;
+    dbxl_data_set_backend(NULL);
     dbg.shutting_down = true;
     take_terminal();
     if (watched_fd >= 0)
@@ -567,4 +601,17 @@ void dbxl_debug_break_function(const char *name)
         return;
     snprintf(dbg.func, sizeof dbg.func, "%s", name);
     dbg.b->ops->bp_func(dbg.b, name, (void *)(intptr_t)REQ_FUNCTION);
+}
+
+void dbxl_debug_select_frame(int level)
+{
+    const dbg_frame *f;
+
+    if (dbg.state != ST_STOPPED || level < 0 || level >= dbg.nframes)
+        return;
+    f = &dbg.frames[level];
+    xtk_pane_set_selected(pane(DBXL_W_CALLERS), level);
+    show_source(f, false);
+    locals_title(f);
+    dbxl_data_refresh(f->file[0] ? f->func : "", level);
 }

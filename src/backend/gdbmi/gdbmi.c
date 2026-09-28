@@ -26,6 +26,7 @@
 
 #include "backend/backend.h"
 #include "backend/gdbmi/mi.h"
+#include "dbxl_py.h"                 /* generated from dbxl.py */
 
 #define MAX_PENDING 256
 #define MAX_FRAMES 256
@@ -50,6 +51,7 @@ struct gdbmi {
     dbg_frame frames[MAX_FRAMES];
     FILE *log;                     /* $DBXL_MI_LOG: the MI traffic */
     int inferior_pid;
+    char helper_dir[64];           /* holds dbxl.py while GDB runs */
 };
 
 static void emit(struct gdbmi *g, dbg_event *ev)
@@ -152,6 +154,137 @@ static void parse_bkpt(const mi_value *b, dbg_breakpoint *bp)
     bp->line = (int)mi_int(where, "line", 0);
 }
 
+static char *dup_str(const mi_value *t, const char *key)
+{
+    const char *s = mi_str(t, key);
+
+    return strdup(s ? s : "");
+}
+
+static enum dbg_kind parse_kind(const char *k)
+{
+    static const struct { const char *name; enum dbg_kind kind; } kinds[] = {
+        { "int", DBG_K_INT }, { "uint", DBG_K_UINT }, { "char", DBG_K_CHAR },
+        { "uchar", DBG_K_UCHAR }, { "bool", DBG_K_BOOL },
+        { "float", DBG_K_FLOAT }, { "enum", DBG_K_ENUM },
+        { "pointer", DBG_K_POINTER }, { "array", DBG_K_ARRAY },
+        { "struct", DBG_K_STRUCT }, { "union", DBG_K_UNION },
+        { "func", DBG_K_FUNC }, { "error", DBG_K_ERROR },
+    };
+
+    for (size_t i = 0; k && i < sizeof kinds / sizeof kinds[0]; i++)
+        if (strcmp(k, kinds[i].name) == 0)
+            return kinds[i].kind;
+    return DBG_K_OTHER;
+}
+
+static void parse_value(const mi_value *t, dbg_value *v)
+{
+    const mi_value *ch = mi_get(t, "ch"), *p = mi_get(t, "p");
+    const char *a = mi_str(t, "a"), *b = mi_str(t, "b"), *s = mi_str(t, "s");
+
+    memset(v, 0, sizeof *v);
+    v->name = dup_str(t, "n");
+    v->kind = parse_kind(mi_str(t, "k"));
+    v->type_name = dup_str(t, "t");
+    v->type_style = dup_str(t, "ts");
+    v->tag = dup_str(t, "tag");
+    v->size = (int)mi_int(t, "sz", 0);
+    v->has_addr = a && *a;
+    v->addr = v->has_addr ? strtoull(a, NULL, 16) : 0;
+    v->value = dup_str(t, "v");
+    v->bits = b && *b ? strtoull(b, NULL, 16) : 0;
+    v->str = s ? strdup(s) : NULL;
+    v->expr = dup_str(t, "e");
+    v->lo = mi_int(t, "lo", 0);
+    if (ch && ch->kind == MI_LIST) {
+        int n = 0;
+        for (const mi_value *c = ch->child; c; c = c->next)
+            n++;
+        v->children = calloc((size_t)(n ? n : 1), sizeof *v->children);
+        for (const mi_value *c = ch->child; c; c = c->next)
+            parse_value(c, &v->children[v->nchildren++]);
+    }
+    if (p && p->kind == MI_TUPLE) {
+        v->pointee = calloc(1, sizeof *v->pointee);
+        parse_value(p, v->pointee);
+    }
+}
+
+static void parse_group(const mi_value *list, dbg_value_group *grp)
+{
+    int n = 0;
+
+    for (const mi_value *c = list ? list->child : NULL; c; c = c->next)
+        n++;
+    grp->vars = calloc((size_t)(n ? n : 1), sizeof *grp->vars);
+    for (const mi_value *c = list ? list->child : NULL; c; c = c->next)
+        parse_value(c, &grp->vars[grp->nvars++]);
+}
+
+static dbg_values *parse_values(const mi_value *r, enum dbg_scope scope,
+                                int level)
+{
+    dbg_values *vals = calloc(1, sizeof *vals);
+
+    vals->scope = scope;
+    vals->level = level;
+    vals->ptrsize = (int)mi_int(r, "ptrsize", 8);
+    if (scope == DBG_SCOPE_LOCALS) {
+        vals->groups = calloc(1, sizeof *vals->groups);
+        vals->ngroups = 1;
+        parse_group(mi_get(r, "vars"), &vals->groups[0]);
+    } else {
+        const mi_value *files = mi_get(r, "files");
+        int n = 0;
+
+        for (const mi_value *f = files ? files->child : NULL; f; f = f->next)
+            n++;
+        vals->groups = calloc((size_t)(n ? n : 1), sizeof *vals->groups);
+        for (const mi_value *f = files ? files->child : NULL; f; f = f->next) {
+            dbg_value_group *grp = &vals->groups[vals->ngroups++];
+            grp->file = dup_str(f, "file");
+            grp->fullname = dup_str(f, "fullname");
+            parse_group(mi_get(f, "vars"), grp);
+        }
+    }
+    return vals;
+}
+
+static void free_value(dbg_value *v)
+{
+    free(v->name);
+    free(v->type_name);
+    free(v->type_style);
+    free(v->tag);
+    free(v->value);
+    free(v->str);
+    free(v->expr);
+    for (int i = 0; i < v->nchildren; i++)
+        free_value(&v->children[i]);
+    free(v->children);
+    if (v->pointee) {
+        free_value(v->pointee);
+        free(v->pointee);
+    }
+}
+
+void dbg_values_free(dbg_values *vals)
+{
+    if (!vals)
+        return;
+    for (int i = 0; i < vals->ngroups; i++) {
+        dbg_value_group *grp = &vals->groups[i];
+        for (int k = 0; k < grp->nvars; k++)
+            free_value(&grp->vars[k]);
+        free(grp->vars);
+        free(grp->file);
+        free(grp->fullname);
+    }
+    free(vals->groups);
+    free(vals);
+}
+
 static void on_result(struct gdbmi *g, const mi_record *r)
 {
     struct pending p;
@@ -181,6 +314,17 @@ static void on_result(struct gdbmi *g, const mi_record *r)
         emit(g, &ev);
         break;
     }
+    case DBG_REQ_VALUES:
+        ev.type = DBG_EV_VALUES;
+        /* id carries scope * 1000 + level. */
+        ev.values = parse_values(r->results, (enum dbg_scope)(p.id / 1000),
+                                 p.id % 1000);
+        emit(g, &ev);
+        break;
+    case DBG_REQ_ASSIGN:
+        ev.type = DBG_EV_ASSIGNED;
+        emit(g, &ev);
+        break;
     case DBG_REQ_BP_DELETE:
         ev.type = DBG_EV_BP_DELETED;
         ev.bp.id = p.id;
@@ -371,6 +515,43 @@ static void run(struct gdbmi *g)
     sendf(g, DBG_REQ_EXEC, NULL, 0, "-exec-run");
 }
 
+/* Write dbxl.py to a private directory and have GDB source it. */
+static void load_helper(struct gdbmi *g)
+{
+    char path[128], cmd[160], q[400];
+    FILE *f;
+
+    snprintf(g->helper_dir, sizeof g->helper_dir, "%s/dbxl-XXXXXX",
+             getenv("TMPDIR") && *getenv("TMPDIR") && strlen(getenv("TMPDIR")) < 40
+                 ? getenv("TMPDIR") : "/tmp");
+    if (!mkdtemp(g->helper_dir)) {
+        g->helper_dir[0] = '\0';
+        return;
+    }
+    snprintf(path, sizeof path, "%s/dbxl.py", g->helper_dir);
+    f = fopen(path, "w");
+    if (!f)
+        return;
+    for (int i = 0; dbxl_py[i]; i++)
+        fputs(dbxl_py[i], f);
+    fclose(f);
+    snprintf(cmd, sizeof cmd, "source %s", path);
+    mi_quote(cmd, q, sizeof q);
+    sendf(g, DBG_REQ_OTHER, NULL, 0, "-interpreter-exec console %s", q);
+}
+
+static void remove_helper(struct gdbmi *g)
+{
+    char path[128];
+
+    if (!g->helper_dir[0])
+        return;
+    snprintf(path, sizeof path, "%s/dbxl.py", g->helper_dir);
+    unlink(path);
+    rmdir(g->helper_dir);
+    g->helper_dir[0] = '\0';
+}
+
 static int gdbmi_start(dbg_backend *b, const dbg_launch *l)
 {
     struct gdbmi *g = (struct gdbmi *)b;
@@ -413,6 +594,7 @@ static int gdbmi_start(dbg_backend *b, const dbg_launch *l)
 
     copy(g->run_to, sizeof g->run_to, l->run_to);
     sendf(g, DBG_REQ_OTHER, NULL, 0, "-gdb-set confirm off");
+    load_helper(g);
     mi_quote(l->program, q, sizeof q);
     sendf(g, DBG_REQ_START, NULL, 0, "-file-exec-and-symbols %s", q);
     {
@@ -467,6 +649,7 @@ static void gdbmi_shutdown(dbg_backend *b)
         }
         g->pid = 0;
     }
+    remove_helper(g);
     if (g->log)
         fclose(g->log);
     free(g->buf);
@@ -534,6 +717,47 @@ static void gdbmi_frames(dbg_backend *b, int max)
           "-stack-list-frames 0 %d", max > 0 ? max - 1 : MAX_FRAMES - 1);
 }
 
+static void gdbmi_values(dbg_backend *b, enum dbg_scope scope, int level,
+                         const char *const *deref, int nderef, void *cookie)
+{
+    struct gdbmi *g = (struct gdbmi *)b;
+    size_t cap = 256, n = 0;
+    char *args = malloc(cap), q[1100];
+
+    n = (size_t)snprintf(args, cap, scope == DBG_SCOPE_LOCALS ? "locals %d"
+                                                              : "globals",
+                         level);
+    for (int i = 0; i < nderef; i++) {
+        size_t need;
+
+        mi_quote(deref[i], q, sizeof q);
+        need = n + strlen(q) + 16;
+        if (need > cap) {
+            cap = need * 2;
+            args = realloc(args, cap);
+        }
+        n += (size_t)snprintf(args + n, cap - n, " --deref %s", q);
+    }
+    if (n < 3500)
+        sendf(g, DBG_REQ_VALUES, cookie, (int)scope * 1000 + level,
+              "-dbxl-values %s", args);
+    else                           /* too many paths: follow none */
+        sendf(g, DBG_REQ_VALUES, cookie, (int)scope * 1000 + level,
+              "-dbxl-values %s", scope == DBG_SCOPE_LOCALS ? "locals" : "globals");
+    free(args);
+}
+
+static void gdbmi_assign(dbg_backend *b, const char *expr, const char *text,
+                         void *cookie)
+{
+    char e[2200], q[4500];
+
+    snprintf(e, sizeof e, "(%s)=(%s)", expr, text);
+    mi_quote(e, q, sizeof q);
+    sendf((struct gdbmi *)b, DBG_REQ_ASSIGN, cookie, 0,
+          "-data-evaluate-expression %s", q);
+}
+
 static int gdbmi_pid(dbg_backend *b)
 {
     return ((struct gdbmi *)b)->inferior_pid;
@@ -555,6 +779,8 @@ static const struct dbg_backend_ops ops = {
     .bp_delete = gdbmi_bp_delete,
     .frames = gdbmi_frames,
     .pid = gdbmi_pid,
+    .values = gdbmi_values,
+    .assign = gdbmi_assign,
 };
 
 dbg_backend *dbg_gdbmi_create(dbg_event_fn fn, void *arg)

@@ -36,6 +36,52 @@ typedef struct dbg_frame {
     int line;                      /* 0 without line info */
 } dbg_frame;
 
+/* A variable's value as a typed tree (DESIGN.md 7.1). */
+enum dbg_kind {
+    DBG_K_INT, DBG_K_UINT, DBG_K_CHAR, DBG_K_UCHAR, DBG_K_BOOL, DBG_K_FLOAT,
+    DBG_K_ENUM, DBG_K_POINTER, DBG_K_ARRAY, DBG_K_STRUCT, DBG_K_UNION,
+    DBG_K_FUNC, DBG_K_OTHER, DBG_K_ERROR
+};
+
+typedef struct dbg_value {
+    char *name;                    /* variable, field name or index */
+    enum dbg_kind kind;
+    char *type_name;               /* menu title: "int", "unsigned-char", "pointer" */
+    char *type_style;              /* "-> shape-struct", "[0..3] point-struct" */
+    char *tag;                     /* struct/union tag, for "shape{}" */
+    int size;
+    bool has_addr;
+    uint64_t addr;                 /* the object's address */
+    char *value;                   /* int: decimal; float: repr; enum: name;
+                                      pointer: hex; error: the text */
+    uint64_t bits;                 /* the value's bytes, little-endian */
+    char *str;                     /* pointers, char arrays: the C string; NULL if none */
+    char *expr;                    /* a debugger expression for Edit */
+    long lo;                       /* arrays: the low bound */
+    struct dbg_value *children;    /* arrays, structs */
+    int nchildren;
+    struct dbg_value *pointee;     /* only for dereferenced paths */
+} dbg_value;
+
+typedef struct dbg_value_group {
+    char *file;                    /* globals: "rich.c"; locals: NULL */
+    char *fullname;
+    dbg_value *vars;
+    int nvars;
+} dbg_value_group;
+
+enum dbg_scope { DBG_SCOPE_LOCALS, DBG_SCOPE_GLOBALS };
+
+typedef struct dbg_values {
+    enum dbg_scope scope;
+    int level;                     /* locals: the frame */
+    int ptrsize;                   /* the target's pointer size */
+    dbg_value_group *groups;
+    int ngroups;
+} dbg_values;
+
+void dbg_values_free(dbg_values *v);
+
 typedef struct dbg_breakpoint {
     int id;
     bool enabled;
@@ -61,6 +107,8 @@ enum dbg_event_type {
     DBG_EV_FRAMES,                 /* frames, nframes */
     DBG_EV_BP_SET,                 /* bp, cookie */
     DBG_EV_BP_DELETED,             /* bp.id, cookie */
+    DBG_EV_VALUES,                 /* values (the receiver owns them), cookie */
+    DBG_EV_ASSIGNED,               /* cookie */
     DBG_EV_ERROR,                  /* message, request, cookie */
     DBG_EV_DIED,                   /* the engine went away */
 };
@@ -74,6 +122,8 @@ enum dbg_request {
     DBG_REQ_BP_FUNC,
     DBG_REQ_BP_DELETE,
     DBG_REQ_FRAMES,
+    DBG_REQ_VALUES,
+    DBG_REQ_ASSIGN,
 };
 
 typedef struct dbg_event {
@@ -86,6 +136,7 @@ typedef struct dbg_event {
     const dbg_frame *frames;
     int nframes;
     dbg_breakpoint bp;
+    dbg_values *values;
     const char *message;
     enum dbg_request request;
     void *cookie;                  /* passed through from the request */
@@ -116,6 +167,17 @@ struct dbg_backend_ops {
 
     /* The program's process id, 0 when it isn't running. */
     int (*pid)(dbg_backend *b);
+
+    /*
+     * Values: a frame's locals or all globals, as trees.  Pointers are
+     * followed only at the given paths ("sp*", "sp*.corners*": a variable
+     * name, then ".field", "[i]" or "*").
+     */
+    void (*values)(dbg_backend *b, enum dbg_scope scope, int level,
+                   const char *const *deref, int nderef, void *cookie);
+    /* expr = text, in the program's language. */
+    void (*assign)(dbg_backend *b, const char *expr, const char *text,
+                   void *cookie);
 };
 
 struct dbg_backend {

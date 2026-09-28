@@ -301,7 +301,7 @@ All observed *[obs p2-p5]*. These are the rules the value formatter must reprodu
 | enum | enumerator name `GREEN` |
 | pointer | `ptr`; `<null>` if 0; after `more`: `->shape{}`; style string: `"hello, world"` |
 | array (collapsed) | `[]`; one level: `[ elem elem ]` (10 elements per line); more: one element per line `[ 0]: ...` |
-| struct (collapsed) | `tag{}`; `more`: inline `{ v v v }` without field names; `more` again: vertical, one `field: value` per line; `flatten` expands all inline *[obs p13]* |
+| struct (collapsed) | `tag{}`; `more`: inline `{ v v v }` without field names; `more` again: vertical, one `field: value` per line. Levels are relative: a child shows at parent + own - 2 (min 1), so `more` on an element adds to what its parent implies. `flatten` = `more` kept horizontal, not following pointers *[obs p13, M4 scenario]* |
 | wrap | structural only: inline arrays break every 10 elements, continuation indented after `name: [ `; lines never rewrap to the pane width, they are cut off *[obs p13]* |
 | Globals header | `----- File rich.c -----`, blank line, then values |
 | Monitor | `----- Globals -----`, blank, `----- Locals -----`, values |
@@ -410,10 +410,11 @@ Events (`dbg_event`): `STOPPED{reason, signal, bp id, frame}`, `RUNNING`, `EXITE
 `RESULT{token, payload}`, `ERROR{token, message}`, `OUTPUT{inferior|debugger text}`,
 `BP_CHANGED`, `LIBRARY_LOADED` (resolves deferred breakpoints).
 
-**Implemented so far** (`src/backend/backend.h`, milestone 3): start, shutdown, fd,
-readable, cont, next, step, step_insn, finish, restart, bp_line, bp_func, bp_delete and
-frames, with events RUNNING, STOPPED, EXITED, SIGNALLED, FRAMES, BP_SET, BP_DELETED, ERROR
-and DIED. The rest arrives with the panes that need it. `DBXL_GDB` overrides the gdb binary.
+**Implemented so far** (`src/backend/backend.h`, milestones 3-4): start, shutdown, fd,
+readable, cont, next, step, step_insn, finish, restart, bp_line, bp_func, bp_delete,
+frames, pid, values (a frame's locals or all globals as trees, following pointers only at
+requested paths) and assign, with events RUNNING, STOPPED, EXITED, SIGNALLED, FRAMES,
+VALUES, ASSIGNED, BP_SET, BP_DELETED, ERROR and DIED. The rest arrives with the panes that need it. `DBXL_GDB` overrides the gdb binary.
 The program runs on dbxl's terminal (or `/dev/null` without one), never on the MI pipes. The
 terminal is attached with redirections for GDB's startup shell (console `set args ... <tty >tty
 2>&1`; GDB 17 `-exec-arguments` quotes each word), not `-inferior-tty-set`, which warns
@@ -447,10 +448,14 @@ from backend-formatted strings, so both backends produce identical text.
 | Threads | `-thread-info` |
 
 ### 7.3 Value kinds from GDB
-MI var objects give type *names*, not type *codes*. The GDB backend loads `dbxl.py`, which
-defines a Python MI command (GDB >= 13) `-dbxl-value-info VAROBJ` returning
-`kind, size, bytes, enum names` from `gdb.Value`/`gdb.Type.code`. If GDB lacks Python, the
-fallback classifies by parsing `ptype`/`whatis` output, which is lossier. A future LLDB backend
+MI var objects give type *names*, not type *codes*. The GDB backend embeds
+`src/backend/gdbmi/dbxl.py` (written to a private temp directory and sourced at start),
+which defines a Python MI command (GDB >= 14) `-dbxl-values locals LEVEL | globals
+[--deref PATH]...` returning whole trees: kind, xldb-style type name and `type` text, tag,
+size, address, value, raw bytes, the string at a pointer, an edit expression, children and
+(for requested paths) pointees. Globals come from `-symbol-info-variables`, limited to the
+program's own objfile, in declaration order. Without Python in GDB the data panes stay
+empty (no fallback yet). A future LLDB backend
 gets the same information natively from SBValue/SBType.
 
 ### 7.4 LLDB (future)
@@ -549,6 +554,8 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
    | Busy pointer | **done** *[obs p10]*: stopwatch, used while xldb works | M3 |
    | Conditional stop sign, Formats window | open | M5 |
    | Signal command, `-q`, core files (`-co`) | open | M6 |
+   | Edit input checked against the style (xldb re-prompts for `-5` on a value shown in hex) | open | M5 |
+   | Select subrange, Cast, Downcast, Show self, Function parameter | open | M5 |
 
    Mono-scheme results: pane borders are black in `-bw` and white in `-wb` whether active or
    idle. The frame's 2px border is black (default, `-bw`) or white (`-wb`). Scrollbar thumbs are
@@ -577,9 +584,12 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
    breakpoints from Source clicks and the Breakpoint dialog, a basic Callers list, Messages.
    Visual test: a 15-step scenario recorded from xldb (also at scale 2); the steps where GDB and
    AIX step differently compare with reviewed dbxl captures. Recon pass 12.
-4. **Data panes:** Locals, Globals, Monitor with formatter and the list-style variable menus
-   (moved here from milestone 2, since they need variables to compare against xldb). Callers,
-   frame selection, the compact Edit dialog.
+4. **Data panes** (done): Locals, Globals, Monitor with the formatter and the variable menu
+   (a pane), styles, detail levels, flatten, save/recall, Edit (compact dialog), Monitor
+   on/off, Callers frame selection (cyan bar in Source). Visual test: a 30-step scenario
+   recorded from xldb on `rich` (also at scale 2). Recon pass 13. Menu actions for later
+   milestones: Breakpoint (trigger), Select subrange, Cast, Downcast, Show self, Function
+   parameter, Storage view with Storage open.
 5. **Remaining panes:** Breakpoints window and actions, Disassembly, Registers, Storage, Files,
    Subprograms, Threads, Help (own text), Options menu, Save layout, Save Window.
 6. **Hardening:** core files, attach, signals, deferred breakpoints, `commandList` actions,

@@ -163,6 +163,36 @@ d = display.Display(); d.screen().root.warp_pointer($((640 * n)), $((512 * n)));
 echo "milestone 3 scenario:"
 m3 "$disp" 1 "$out/m3"
 
+# --- milestone 4 scenario: data panes and variable menus, debugging rich --
+m4() {   # display scale outdir
+    d=$1; n=$2; o=$3
+    DISPLAY=$d python3 -c "
+from Xlib import display
+d = display.Display(); d.screen().root.warp_pointer($((640 * n)), $((512 * n))); d.sync()"
+    (cd "$top/tests/progs" && DISPLAY=$d exec "$top/dbxl" -scale "$n" ./rich) \
+        >"$o.log" 2>&1 &
+    dbxl=$!
+    i=0
+    until DISPLAY=$d xwininfo -name "dbxl rich" >/dev/null 2>&1; do
+        i=$((i + 1)); [ $i -gt 50 ] && { echo "dbxl ./rich did not appear"; exit 1; }
+        sleep 0.1
+    done
+    sleep 2
+    rm -rf "$o"
+    mkdir -p "$o"
+    if python3 "$top/tests/visual/scenario_m4.py" "$d" "$o" --wait 1 --scale "$n" \
+            >"$o/scenario.log" 2>&1 &&
+       python3 "$top/tests/visual/m4_compare.py" "$o" "$ref" "$o" "$n"; then
+        :
+    else
+        echo "  FAIL (see $o)"
+        fail=1
+    fi
+    kill "$dbxl" 2>/dev/null || true; wait "$dbxl" 2>/dev/null || true; dbxl=
+}
+echo "milestone 4 scenario:"
+m4 "$disp" 1 "$out/m4"
+
 # --- startup at scales 2-4: must equal the reference enlarged NxN ---------
 # The frame's logical geometry is multiplied by N, so it is at (33N, 73N).
 # The pointer is placed at logical (640,512), inside Source, as at scale 1.
@@ -239,5 +269,8 @@ kill "$dbxl" 2>/dev/null || true; wait "$dbxl" 2>/dev/null || true; dbxl=
 
 echo "milestone 3 scenario -scale 2:"
 m3 "$big" 2 "$out/m3-x2"
+
+echo "milestone 4 scenario -scale 2:"
+m4 "$big" 2 "$out/m4-x2"
 
 exit $fail

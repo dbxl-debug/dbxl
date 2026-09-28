@@ -46,6 +46,8 @@ struct xtk_pane {
     int top;                     /* first visible line */
     unsigned char *marks;        /* margin glyphs per line */
     int nmarks;
+    unsigned char *roles;        /* per line: XTK_ROLE_* */
+    int nroles;
     xtk_scrollbar *vsb, *hsb;
     int scrollbars;
     bool mapped;
@@ -167,6 +169,19 @@ void xtk_pane_set_marks(xtk_pane *p, const unsigned char *marks, int n)
     redraw(p);
 }
 
+void xtk_pane_set_line_roles(xtk_pane *p, const unsigned char *roles, int n)
+{
+    free(p->roles);
+    p->roles = NULL;
+    p->nroles = 0;
+    if (n > 0) {
+        p->roles = malloc((size_t)n);
+        memcpy(p->roles, roles, (size_t)n);
+        p->nroles = n;
+    }
+    redraw(p);
+}
+
 /*
  * The arrows scroll by a line.  Down stops once the last page is reached;
  * a view that a stop centred further down stays put (recon pass 12).
@@ -284,6 +299,8 @@ static void redraw(xtk_pane *p)
         if (line == p->selected) {
             xtk_fill(d, XTK_SELECT_BG, 0, y, w, m->line_h);
             fg = XTK_SELECT_FG;
+        } else if (line < p->nroles && p->roles[line] == XTK_ROLE_INFO) {
+            fg = XTK_MENUINFO_FG;
         }
         pad(buf, cols, line < p->nlines ? p->lines[line] : NULL);
         xtk_draw_text(d, fg, 0, y + m->ascent, buf, cols);
@@ -469,7 +486,9 @@ bool xtk_pane_handle_event(xtk_pane *p, const XEvent *ev)
         break;
     case EnterNotify:
         set_active(p, true);
-        if (autoraise && ev->xcrossing.detail != NotifyInferior)
+        /* Not over an open dialog (it is modal and stays in front). */
+        if (autoraise && ev->xcrossing.detail != NotifyInferior &&
+            !xtk_dialog_active())
             xtk_pane_raise(p);
         break;
     case LeaveNotify:
