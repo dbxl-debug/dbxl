@@ -566,11 +566,11 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
    | Horizontal scrollbars | **done** *[obs p10]*: mirror the vertical bar; neither bar shortens; vertical is created first | M2 |
    | Busy pointer | **done** *[obs p10]*: stopwatch, used while xldb works | M3 |
    | Conditional stop sign (`?` fill bitmap), triggers, Breakpoints actions, Disassembly/Registers/Storage/Files/Subprograms/Threads clicks | **done** *[obs p14]* | M5a |
-   | Formats window, Save layout / breakpoint files, Help | open | M5b |
-   | After a trigger is set xldb scrolls Source to top line 20 (line 47 on row 27 of 31); rule unknown | open | M5b |
+   | Formats window (= the variable menu), Save layout / breakpoint files, Detail per click, Subprograms All, Breakpoint all Subprograms, Help navigation | **done** *[obs p15]* | M5b |
+   | Source scroll after a trigger: the line goes 4 rows above the bottom | **done** *[obs p15]* | M5b |
    | Signal command, `-q`, core files (`-co`) | open | M6 |
-   | Edit input checked against the style (xldb re-prompts for `-5` on a value shown in hex) | open | M5 |
-   | Select subrange, Cast, Downcast, Show self, Function parameter | open | M5 |
+   | Edit input checked against the style (hint message, prompt again) | **done** *[obs p15]* | M5b |
+   | Select subrange, Cast (`Select new base type`), Function parameter message; Downcast/Show self are C++ only | **done** *[obs p15]* | M5b |
 
    Mono-scheme results: pane borders are black in `-bw` and white in `-wb` whether active or
    idle. The frame's 2px border is black (default, `-bw`) or white (`-wb`). Scrollbar thumbs are
