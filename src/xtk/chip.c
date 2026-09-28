@@ -11,7 +11,8 @@ struct xtk_chip {
     Window win;
     xtk_surface surf;
     char *label;
-    int w, h;
+    int x, y, w, h;
+    bool mapped;
     xtk_chip_fn fn;
     void *arg;
 };
@@ -25,6 +26,8 @@ xtk_chip *xtk_chip_create(const char *label, xtk_rect geom)
     xtk_chip *c = calloc(1, sizeof *c);
 
     c->label = strdup(label);
+    c->x = geom.x;
+    c->y = geom.y;
     c->w = geom.w;
     c->h = geom.h;
     a.background_pixmap = None;
@@ -50,6 +53,8 @@ void xtk_chip_set_handler(xtk_chip *c, xtk_chip_fn fn, void *arg)
 
 void xtk_chip_set_geometry(xtk_chip *c, xtk_rect g)
 {
+    c->x = g.x;
+    c->y = g.y;
     c->w = g.w;
     c->h = g.h;
     XMoveResizeWindow(xtk_dpy(), c->win, xtk_s(g.x), xtk_s(g.y),
@@ -62,12 +67,21 @@ void xtk_chip_map(xtk_chip *c)
 {
     XRaiseWindow(xtk_dpy(), c->win);
     XMapWindow(xtk_dpy(), c->win);
+    c->mapped = true;
 }
 
 void xtk_chip_unmap(xtk_chip *c)
 {
     XUnmapWindow(xtk_dpy(), c->win);
+    c->mapped = false;
 }
+
+xtk_rect xtk_chip_geometry(const xtk_chip *c)
+{
+    return (xtk_rect){ c->x, c->y, c->w, c->h };
+}
+
+bool xtk_chip_mapped(const xtk_chip *c) { return c->mapped; }
 
 static void draw(xtk_chip *c)
 {

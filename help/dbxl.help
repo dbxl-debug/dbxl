@@ -1,0 +1,607 @@
+Help index
+----------
+
+  --> 1. Introduction to dbxl
+  --> 2. About this version
+  -->    2.1  Linux and GDB
+  -->    2.2  Scaling for high resolution screens
+  -->    2.3  Differences from xldb
+  --> 3. The dbxl windows
+  -->    3.1  Moving within windows
+  -->    3.2  Source, Disassembly and Storage scrolling
+  -->    3.3  Window control
+  -->    3.4  The Breakpoints window
+  -->    3.5  The Callers window
+  -->    3.6  The Commands window
+  -->    3.7  The Disassembly window
+  -->    3.8  The Files window
+  -->    3.9  The Globals window
+  -->    3.10 The Help window
+  -->    3.11 The Locals window
+  -->    3.12 The Monitor window
+  -->    3.13 The Storage window
+  -->    3.14 The Messages window
+  -->    3.15 The Registers window
+  -->    3.16 The Source window
+  -->    3.17 The Subprograms window
+  -->    3.18 The Threads window
+  --> 4. Program variables and registers
+  -->    4.1 Legend
+  -->    4.2 Displaying variables and registers
+  -->    4.3 Changing variables and registers
+  -->    4.4 Setting conditional breakpoints on variables and registers
+  --> 5. Options
+  --> 6. Saving and restoring breakpoints
+
+  --> A. How do I ...?
+  --> B. Command-line invocation
+  --> C. Configuring dbxl using .Xdefaults
+  --> D. Notes on using dbxl
+  --> E. Common problems
+
+Left-click any line starting with "-->" to see the corresponding text.
+You can save a copy of the help text by left-clicking the line below:
+    --> copy help text to $HOME/dbxl.help.text
+
+
+1. Introduction to dbxl
+-----------------------
+
+dbxl is a graphical source-level debugger for the X Window System. It shows
+a program's source, its variables, the call stack, breakpoints, machine
+instructions, registers and memory in a set of windows inside one frame, and
+lets you control the program with the mouse and a few keys.
+
+dbxl follows the look and behaviour of IBM's xldb debugger for AIX closely.
+Its windows, menus and dialogs work the way xldb's did, so what you learned
+there applies here.
+
+A typical session:
+
+    dbxl ./myprogram arg1 arg2
+
+dbxl starts the program under the debugger and stops it at the first line
+of main. The Source window shows where the program stopped, marked by an
+arrow in the left margin. From there you can:
+
+    - left-click a source line to set or clear a breakpoint;
+    - left-click Continue, Next, Step or Return in the Commands window;
+    - left-click a variable in the Locals or Globals window to change how it
+      is shown, to change its value or to monitor it.
+
+To leave dbxl, left-click Exit in the Commands window.
+
+
+2. About this version
+---------------------
+
+This section describes what is particular to this version of dbxl.
+    --> Linux and GDB
+    --> Scaling for high resolution screens
+    --> Differences from xldb
+
+
+2.1 Linux and GDB
+-----------------
+
+dbxl runs on Linux and uses GDB to control the program being debugged. GDB
+must be installed and must have Python support (version 14 or later). The
+environment variable DBXL_GDB names a different GDB program to use.
+
+The program runs on the terminal dbxl was started from: its output appears
+there, and it reads its input from there. While the program runs, Ctrl-C on
+that terminal stops it.
+
+Registers and machine instructions are those of the machine dbxl runs on.
+On x86-64 the Registers window shows the registers described in
+    --> The Registers window
+
+
+2.2 Scaling for high resolution screens
+---------------------------------------
+
+dbxl draws everything in a fixed-size font, as xldb did. On a high
+resolution screen this can be too small to read. The -scale option enlarges
+everything by a whole factor:
+
+    dbxl -scale 2 ./myprogram
+
+-scale auto picks the largest factor for which the frame still fits the
+screen. The factor can also be set with the resource dbxl.scale.
+
+
+2.3 Differences from xldb
+-------------------------
+
+dbxl aims to look and behave like xldb. Where it differs, it is on purpose:
+
+    - dbxl debugs Linux programs with GDB; registers and disassembly are
+      those of the host machine.
+    - Windows are always redrawn completely; xldb sometimes left fragments
+      of closed dialogs on the screen.
+    - With -bw and -wb, the arrow and stop signs use the scheme's colours so
+      that they stay visible.
+    - Addresses are shown with as many digits as the program's pointers.
+
+
+3. The dbxl windows
+-------------------
+
+All dbxl windows live inside one frame. A window can be open, minimized to a
+small title (called a chip), or hidden. Left-click a chip to open its
+window. Each window has a title bar; left-clicking it opens the Window
+Control menu.
+    --> Window control
+
+Moving the mouse into a window brings it to the front, unless autoraise is
+turned off in the Options menu. The middle mouse button raises a window. The
+right mouse button moves or resizes it.
+
+
+3.1 Moving within windows
+-------------------------
+
+The mouse pointer is dbxl's cursor: keys that move "the cursor" move the
+pointer, scrolling the window when needed.
+
+    Cursor keys : move the cursor by one character or line.
+    Page Up     : scrolls the window up one page.
+    Page Down   : scrolls the window down one page.
+    Home        : moves the cursor to the first column.
+    End         : moves the cursor to the end of the line.
+    :n<Enter>   : moves the cursor to line n.
+    /x<Enter>   : moves the cursor forward to the next occurrence of x.
+    \x<Enter>   : moves the cursor backward to the previous occurrence of x.
+    ?x<Enter>   : the same as \x.
+    /<Enter>    : searches forward again for the last string.
+    \<Enter>    : searches backward again for the last string.
+
+Typing :, /, \ or ? opens a small input line in the window; Enter carries
+out the command and Escape cancels it. Whether searches match upper and
+lower case exactly is set by "Case Sensitive" in the Options menu.
+
+
+3.2 Source, Disassembly and Storage scrolling
+---------------------------------------------
+
+Use the scroll bars, the keys described in
+    --> Moving within windows
+or the arrows on the scroll bars to scroll these windows. When the program
+stops, the Source and Disassembly windows scroll so that the stop line is
+in the middle of the window.
+
+
+3.3 Window control
+------------------
+
+Left-click a window's title bar to open the Window Control menu:
+
+    Restore                : returns a maximized window to its size.
+    Move                   : moves the window; drag its outline.
+    Size                   : resizes the window; drag its edges.
+    Minimize               : replaces the window by its chip.
+    Maximize               : makes the window fill the frame.
+    Lower                  : puts the window behind the others.
+    Horizontal scroll bars : shows or hides the horizontal scroll bar.
+    Vertical scroll bars   : shows or hides the vertical scroll bar.
+    Save Window            : writes the window's text to a file.
+
+You can also drag a window with the right mouse button: pressing near the
+middle moves it, pressing near an edge or a corner resizes it.
+
+To keep a layout, use "Save layout" in the Options menu and copy the file
+it writes into your .Xdefaults file.
+    --> Configuring dbxl using .Xdefaults
+
+
+3.4 The Breakpoints window
+--------------------------
+
+The Breakpoints window lists the breakpoints in the order they were set:
+
+    Subprogram [line LineNumber in File]
+
+A conditional breakpoint also shows the object it tests and its trigger,
+and a disabled breakpoint is marked "Disabled".
+
+Left-click a breakpoint to show its line in the Source window and to open
+the "Select Breakpoint Action" menu:
+
+    Clear breakpoint         : removes the breakpoint.
+    Disable breakpoint       : keeps it but lets the program pass.
+    Enable breakpoint        : makes a disabled breakpoint stop again.
+    Clear all breakpoints    : removes all breakpoints (after asking).
+    Disable all breakpoints  : disables every breakpoint.
+    Enable all breakpoints   : enables every breakpoint.
+
+Breakpoints are shown in the left margin of the Source and Disassembly
+windows as stop signs; a hollow one is disabled, and one with a question
+mark is conditional.
+
+
+3.5 The Callers window
+----------------------
+
+The Callers window lists the calls that led to the current stop, the
+innermost first. The highlighted line is the frame shown in the other
+windows.
+
+Left-click a caller to look at it: the Locals window shows its variables,
+and the Source and Disassembly windows show the line (and instruction) of
+the call, highlighted. The arrow stays where the program stopped.
+
+
+3.6 The Commands window
+-----------------------
+
+    Continue      : runs the program until a breakpoint or a signal.
+    Next          : runs to the next source line, stepping over calls.
+    Step          : runs to the next source line, stepping into calls.
+    Machine step  : runs one machine instruction.
+    Return        : runs until the current subprogram returns.
+    Signal        : (not yet available)
+    Edit          : edits the file shown in the Source window.
+    Restart       : starts the program again from the beginning.
+    Exit          : leaves dbxl (after asking).
+    Breakpoint    : sets a breakpoint at a subprogram you name.
+    Options       : opens the Options menu.
+    --> Options
+    Help          : opens this help.
+
+Each command can also be given with the Alt key shown next to it, when the
+mouse pointer is in any dbxl window. The list of commands can be changed
+with the resource dbxl.commandList.
+
+
+3.7 The Disassembly window
+--------------------------
+
+The Disassembly window shows the machine instructions of the subprogram
+where the program stopped, one per line:
+
+    address (+offset)  instruction operands
+
+The arrow marks the next instruction to run. Left-click an instruction to
+set or clear a breakpoint there. "Machine step" runs one instruction.
+
+
+3.8 The Files window
+--------------------
+
+The Files window lists the program's source files. Left-click one to show
+it in the Source window.
+
+
+3.9 The Globals window
+----------------------
+
+The Globals window shows the program's global and static variables, file by
+file. Left-click a variable to change how it is shown, to change its value
+or to monitor it.
+    --> Displaying variables and registers
+
+
+3.10 The Help window
+--------------------
+
+The Help window shows this text. Left-click a line starting with "-->" to go
+to that section. The title bar has three buttons:
+
+    [exit]   : closes the Help window.
+    [index]  : shows the help index.
+    [return] : goes back to where you were before the last jump.
+
+
+3.11 The Locals window
+----------------------
+
+The Locals window shows the parameters and local variables of the selected
+subprogram, titled with its name and file. Which variables are shown is set
+by "Local variables" in the Options menu.
+    --> Displaying variables and registers
+
+
+3.12 The Monitor window
+-----------------------
+
+The Monitor window collects variables you want to keep an eye on. Left-click
+a variable in the Locals or Globals window and select "Monitor on/off" to
+add it here or to remove it again.
+
+
+3.13 The Storage window
+-----------------------
+
+The Storage window shows memory, 16 bytes per line: the address, four words
+in hex and the same bytes as characters. It starts at the program's data.
+
+Left-click a word to open a menu:
+
+    Edit         : changes the word in place; type hex digits and Enter,
+                   or Escape to leave it unchanged.
+    Breakpoint   : (not yet available)
+    Storage view : scrolls the window so that the word is the first line.
+
+"Storage view" in a variable's menu scrolls the Storage window to that
+variable (or, for a register, to the address it holds).
+
+
+3.14 The Messages window
+------------------------
+
+The Messages window is a single line across the bottom of the frame. It
+shows messages from dbxl and disappears at the next mouse click.
+
+
+3.15 The Registers window
+-------------------------
+
+The Registers window shows the machine registers in groups. On x86-64:
+
+    Special : RIP EFLAGS CS SS DS ES FS GS FS_BASE GS_BASE MXCSR
+    General : RAX RBX RCX RDX RSI RDI RBP RSP R8 to R15
+    Double  : the low 64 bits of XMM0 to XMM15
+    Float   : the low 32 bits of XMM0 to XMM15
+
+Which groups are shown is set by "Register control" in the Options menu.
+Left-click a register to change its style or value, or to set a conditional
+breakpoint on it.
+
+
+3.16 The Source window
+----------------------
+
+The Source window shows the file of the selected subprogram. The arrow in
+the left margin marks the line where the program stopped; stop signs mark
+breakpoints. Left-click a line to set or clear a breakpoint on it.
+
+dbxl finds source files with the source search path, which you can change
+with "Edit source search path" in the Options menu and with -I.
+
+
+3.17 The Subprograms window
+---------------------------
+
+The Subprograms window lists the program's subprograms. Left-click one to
+show it in the Source and Disassembly windows. "Subprograms" in the Options
+menu chooses between those with debugging information and all of them.
+
+
+3.18 The Threads window
+-----------------------
+
+The Threads window lists the program's threads; the highlighted one is the
+thread that stopped.
+
+
+4. Program variables and registers
+----------------------------------
+
+The Locals, Globals and Monitor windows show variables as
+
+    name: value
+
+Left-click a variable, or any part of a structured value, to open a menu of
+things you can do with it. The menu lists display styles, levels of detail
+and actions that suit the object's type.
+    --> Legend
+    --> Displaying variables and registers
+    --> Changing variables and registers
+    --> Setting conditional breakpoints on variables and registers
+
+
+4.1 Legend
+----------
+
+    +12, -3        a signed integer
+    129            an unsigned integer
+    'b', '\0'      a character
+    1.5e+0         a floating-point number
+    GREEN          an enumeration value
+    ptr, <null>    a pointer, and a null pointer
+    ->shape{}      a pointer followed to its (structure) target
+    []             an array, not expanded
+    shape{}        a structure, not expanded
+    [ a b c ]      an array, one level expanded
+    { a b c }      a structure, one level expanded
+
+
+4.2 Displaying variables and registers
+--------------------------------------
+
+Detail:
+    more    : shows one more level of an array, structure or pointer.
+    less    : shows one level less.
+    flatten : like more, but keeps a structure on one line.
+The number of levels per click is set by "Detail per click" in the Options
+menu.
+
+Style:
+    character, signed, unsigned, hex : integers.
+    decimal, scientific, hex         : floating-point numbers.
+    string, array, pointer           : what a pointer points to.
+    address : the object's address.
+    type    : the object's type.
+    size    : the object's size in bytes.
+    save    : remembers this object's style.
+    recall  : gives this object the remembered style.
+    default : goes back to the object's normal style.
+
+Other actions:
+    Select subrange    : shows only some elements of an array, or shows the
+                         elements a pointer points to, as [low..high].
+    Cast               : changes the type a pointer points to.
+    Monitor on/off     : adds the object to the Monitor window, or removes
+                         it.
+    Storage view       : shows the object in the Storage window.
+    Function parameter : uses the object in the next user command.
+
+
+4.3 Changing variables and registers
+------------------------------------
+
+Select "Edit" in an object's menu, change the value and press Enter (or
+left-click "proceed"). The value is read in the object's current style:
+
+    signed      : an optional sign and decimal digits, such as -41.
+    unsigned    : decimal digits, such as 12.
+    hex         : hex digits, optionally after 0x, such as 0x4b64.
+    character   : a quoted character, such as 'a', '\n' or '\x41'.
+    decimal and scientific : a floating-point number such as -1.25e-3,
+                  or inf or nan.
+
+If the value does not fit the style, dbxl says what it expects and asks
+again.
+
+
+4.4 Setting conditional breakpoints on variables and registers
+---------------------------------------------------------------
+
+Select "Breakpoint" in an object's menu to stop at the current line only
+when the object's value matches a trigger:
+
+    X      : the value is X.
+    !X     : the value is not X.
+    X..Y   : the value is between X and Y (inclusive).
+    !X..Y  : the value is outside X..Y.
+
+Values are read in the object's current style. A conditional breakpoint is
+shown as a stop sign with a question mark.
+
+
+5. Options
+----------
+
+Left-click Options in the Commands window to open the Options menu.
+Left-click an item to change it; the menu stays open.
+
+    Save layout               : writes the current window layout to a file.
+    Edit source search path   : changes where source files are looked for.
+    Local variables           : Active shows the variables in scope; All
+                                shows every variable of the subprogram.
+    Detail per click          : left-click decreases, right-click increases
+                                the levels that more and less change.
+    Multiprocess debugging    : (not yet available)
+    Fork path                 : (not yet available)
+    Autoraise                 : whether windows come to the front when the
+                                mouse enters them.
+    Compiler variables        : whether compiler-made variables are shown.
+    Language                  : Automatic.
+    Register control          : which register groups are shown.
+    Subprograms               : With -g only, or All.
+    Save Breakpoints          : writes the breakpoints to a file.
+    Load Breakpoints          : sets the breakpoints in a file.
+    Case Sensitive            : whether searches match case exactly.
+    Breakpoint all Subprograms: sets a breakpoint at the start of every
+                                subprogram with debugging information.
+
+
+6. Saving and restoring breakpoints
+-----------------------------------
+
+"Save Breakpoints" in the Options menu writes the current breakpoints to a
+file, by default .dbxl.name in the current directory, where name is the
+program's name. The resource dbxl.breakpointsFile sets another default.
+
+"Load Breakpoints" sets the breakpoints saved in a file, adding them to the
+ones already set.
+
+With the resource dbxl.loadBreakpoints set to true, dbxl loads the saved
+breakpoints when it starts the program; -k prevents that.
+
+
+A. How do I ...?
+----------------
+
+    set a breakpoint on a line:
+        Left-click the line in the Source window.
+    set a breakpoint on a subprogram:
+        Left-click Breakpoint in the Commands window and type its name.
+    see a variable in hex:
+        Left-click it and select "hex".
+    see the elements of an array a pointer points to:
+        Left-click the pointer and select "Select subrange".
+    change a variable:
+        Left-click it and select "Edit".
+    stop when a variable has a certain value:
+        Left-click it and select "Breakpoint".
+    make the text bigger:
+        Start dbxl with -scale 2 (or -scale auto).
+    keep my window layout:
+        Select "Save layout" in the Options menu and copy the file into
+        your .Xdefaults.
+
+
+B. Command-line invocation
+--------------------------
+
+    dbxl [options] [program [arguments ...]]
+
+    -display Display   : the X server to use.
+    -name Name         : the name used to look up resources.
+    -font Font         : the font (default 8x13).
+    -geometry Geometry : the frame's size and position.
+    -title Title       : the frame's title.
+    -bg Color          : the background colour.
+    -fg Color          : the foreground colour.
+    -bw                : black on white.
+    -wb                : white on black.
+    -scale Factor      : auto, 1, 2, 3 or 4.
+    -E Command         : the edit command (%s is the file, %d the line).
+    -I Directory       : adds Directory to the source search path.
+    -k                 : does not load saved breakpoints.
+    -h                 : prints this help and exits.
+
+
+C. Configuring dbxl using .Xdefaults
+------------------------------------
+
+dbxl reads resources from the X server and from $HOME/.Xdefaults, as
+name.resource, where name is dbxl (or the -name option). For example:
+
+    dbxl.font: 8x13
+    dbxl.scale: 2
+    dbxl.autoRaise: false
+
+Colours: background, foreground, titleBackground, titleForeground,
+borderActive, borderIdle, dialogBackground, dialogForeground,
+menuInfoForeground, markBackground, markForeground, cursorForeground,
+mouseBody, mouseOutline, scrollButtonIdle; blackOnWhite and whiteOnBlack.
+
+Behaviour: autoRaise, confirmExit, tagWindows, commandList, runTo, edit,
+breakpointsFile, loadBreakpoints.
+
+Layout: with specialLayout set to true, dbxl uses these resources for each
+window W (Breakpoints, Callers, Commands, Disassembly, Files, Formats,
+Globals, Help, Locals, Messages, Monitor, Registers, Source, Storage,
+Subprograms, Threads):
+
+    dbxl.WGeometry: WidthxHeight+X+Y
+    dbxl.WIconGeometry: WidthxHeight+X+Y
+    dbxl.WIconStartup: true|false
+    dbxl.WScrollbars: vertical|horizontal|both|none
+
+Formats is the menu that opens when you left-click a variable. "Save
+layout" in the Options menu writes these resources for the current layout.
+
+
+D. Notes on using dbxl
+----------------------
+
+    - dbxl shows the values of variables at the moment the program
+      stopped; they are fetched again after every stop.
+    - At the first line of a subprogram (before its prologue has run), its
+      parameters and local variables may not have their values yet.
+    - Programs compiled without -g can be debugged, but only their machine
+      instructions and registers can be shown.
+
+
+E. Common problems
+------------------
+
+    The program is not being run.
+        The program has ended. Left-click Restart to start it again.
+    The source file was not found in the source search path.
+        Add the file's directory with -I or "Edit source search path".
+    The text is too small.
+        Use -scale 2, or -scale auto.

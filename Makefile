@@ -17,10 +17,12 @@ SRCS := \
 	src/data.c \
 	src/machine.c \
 	src/browse.c \
+	src/help.c \
 	src/backend/signals.c \
 	src/backend/gdbmi/gdbmi.c \
 	src/backend/gdbmi/mi_parse.c \
 	src/core/commandlist.c \
+	src/core/input.c \
 	src/core/layout.c \
 	src/core/options.c \
 	src/core/resources.c \
@@ -64,6 +66,15 @@ $(BUILD)/gen/dbxl_py.h: src/backend/gdbmi/dbxl.py Makefile
 
 $(BUILD)/src/backend/gdbmi/gdbmi.o: $(BUILD)/gen/dbxl_py.h
 
+# The help text, the same way.
+$(BUILD)/gen/dbxl_help.h: help/dbxl.help Makefile
+	@mkdir -p $(dir $@)
+	{ echo 'static const char *const dbxl_help[] = {'; \
+	  sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/    "/' -e 's/$$/\\n",/' $<; \
+	  echo '    NULL'; echo '};'; } > $@
+
+$(BUILD)/src/help.o: $(BUILD)/gen/dbxl_help.h
+
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
@@ -81,9 +92,14 @@ $(BUILD)/format_test: tests/unit/format_test.c src/core/value.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ -lm
 
-test: $(BUILD)/mi_parse_test $(BUILD)/format_test
+$(BUILD)/input_test: tests/unit/input_test.c src/core/input.c src/core/value.c
+	@mkdir -p $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ -lm
+
+test: $(BUILD)/mi_parse_test $(BUILD)/format_test $(BUILD)/input_test
 	$(BUILD)/mi_parse_test
 	$(BUILD)/format_test
+	$(BUILD)/input_test
 
 visual: $(PROG) progs
 	tests/visual/run.sh

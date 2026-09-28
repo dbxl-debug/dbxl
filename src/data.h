@@ -11,14 +11,21 @@
 #include "backend/backend.h"
 #include "xtk/xtk.h"
 
-void dbxl_data_init(void);
+/* formats: the Formats window's (the variable menu's) geometry. */
+void dbxl_data_init(xtk_rect formats);
+/* Its default geometry (recon pass 13). */
+#define DBXL_FORMATS_GEOMETRY ((xtk_rect){ 336, 141, 201, 460 })
 void dbxl_data_set_backend(dbg_backend *b);
 /* Fetch the values for a stop or a newly selected frame (func may be ""). */
 void dbxl_data_refresh(const char *func, int level);
 /* The program is gone: no locals. */
 void dbxl_data_clear_locals(void);
+/* The Formats window's current geometry (for Save layout). */
+xtk_rect dbxl_data_formats_geometry(void);
 /* A DBG_EV_VALUES event; takes ownership of v. */
 void dbxl_data_values(dbg_values *v);
+/* A DBG_EV_TYPES event: the program's types, for Cast. */
+void dbxl_data_types(const char *const *names, int n);
 /* A DBG_EV_ASSIGNED event. */
 void dbxl_data_assigned(void);
 /* A left click in Locals, Globals or Monitor. */

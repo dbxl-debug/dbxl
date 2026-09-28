@@ -79,17 +79,11 @@ static void draw_box(void)
     int x;
 
     /*
-     * Centred in the area left of the buttons: a prompt by whole character
-     * columns (360 for "Enter function name", 328 for "Enter the target
-     * file name"), a confirm by pixels rounding half up (98 for "Exit from
-     * xldb?").
+     * Centred in the area left of the buttons by pixels, rounding half up:
+     * 360 for "Enter function name", 372 for "layout file name", 98 for
+     * "Exit from xldb?" in a confirm.
      */
-    if (dlg.prompt && !dlg.compact) {
-        int cols = (dlg.box.w - 85) / m->char_w;
-        x = (cols - len) / 2 * m->char_w;
-    } else {
-        x = (dlg.box.w - 85 - len * m->char_w + 1) / 2;
-    }
+    x = (dlg.box.w - 85 - len * m->char_w + 1) / 2;
 
     xtk_fill(dlg.box.surf.pm, XTK_DIALOG_BG, 0, 0, dlg.box.w, dlg.box.h);
     xtk_draw_text(dlg.box.surf.pm, XTK_DIALOG_FG, x, dlg.prompt ? 21 : 34,
@@ -245,4 +239,14 @@ bool xtk_dialog_handle_event(const XEvent *ev)
         break;
     }
     return true;
+}
+
+void xtk_dialog_set_cursor(int pos)
+{
+    if (!dlg.open || !dlg.prompt)
+        return;
+    if (pos < 0 || pos > dlg.le.len)
+        pos = dlg.le.len;
+    dlg.le.cursor = pos;
+    draw_field();
 }

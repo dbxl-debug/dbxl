@@ -14,7 +14,7 @@ static void usage(void)
             "usage: dbxl [-display Display] [-name Name] [-font Font]\n"
             "            [-geometry Geometry] [-title Title]\n"
             "            [-bg Color] [-fg Color] [-bw] [-wb]\n"
-            "            [-scale auto|1|2|3|4] [-E Command] [-I Directory]\n"
+            "            [-scale auto|1|2|3|4] [-E Command] [-I Directory] [-k] [-h]\n"
             "            [Program [ProgramArgument...]]\n");
 }
 
@@ -48,6 +48,14 @@ int dbxl_opts_parse(struct dbxl_opts *o, int argc, char **argv)
                 usage();
                 return -1;
             }
+            continue;
+        }
+        if (strcmp(a, "-h") == 0) {
+            o->help = 1;
+            continue;
+        }
+        if (strcmp(a, "-k") == 0) {
+            o->no_load_breakpoints = 1;
             continue;
         }
         if (strcmp(a, "-I") == 0) {

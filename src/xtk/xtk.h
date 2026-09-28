@@ -126,6 +126,8 @@ Window xtk_frame_create(xtk_rect geom, const char *title,
                         const char *icon_name, int argc, char **argv);
 Window xtk_frame(void);
 int xtk_frame_w(void);                   /* logical inside size */
+/* The frame's outer position on the screen and inside size, logical. */
+xtk_rect xtk_frame_geometry(void);
 int xtk_frame_h(void);
 void xtk_frame_busy(bool busy);          /* stopwatch pointer while working */
 
@@ -198,6 +200,12 @@ bool xtk_pane_autoraise(void);
 /* Interactive move/resize from the Window Control menu (see gesture.c). */
 void xtk_pane_begin_move(xtk_pane *p);
 void xtk_pane_begin_size(xtk_pane *p);
+/* The pointer as the pane's cursor: move it to a line/column (scrolling it
+ * into view), read where it is, and search the text for a string. */
+void xtk_pane_goto(xtk_pane *p, int line, int col);
+void xtk_pane_cursor(const xtk_pane *p, int *line, int *col);
+bool xtk_pane_search(const xtk_pane *p, const char *s, int dir, bool fold,
+                     int line, int col, int *fline, int *fcol);
 /* Inline input strip (":", "/", ...) at the pointer's row. */
 void xtk_pane_strip_open(xtk_pane *p, int fy, const char *initial);
 bool xtk_pane_handle_event(xtk_pane *p, const XEvent *ev);
@@ -211,6 +219,8 @@ void xtk_chip_set_handler(xtk_chip *c, xtk_chip_fn fn, void *arg);
 void xtk_chip_set_geometry(xtk_chip *c, xtk_rect geom);
 void xtk_chip_map(xtk_chip *c);
 void xtk_chip_unmap(xtk_chip *c);
+xtk_rect xtk_chip_geometry(const xtk_chip *c);
+bool xtk_chip_mapped(const xtk_chip *c);
 bool xtk_chip_handle_event(xtk_chip *c, const XEvent *ev);
 
 /* scrollbar.c */
@@ -278,6 +288,8 @@ void xtk_dialog_prompt_at(const char *message, const char *initial,
                           const char *b1, const char *b2, int x, int y,
                           int anchor_x, int anchor_y,
                           xtk_dialog_fn fn, void *arg);
+/* Put the open prompt's cursor at a column (it starts at the end). */
+void xtk_dialog_set_cursor(int pos);
 bool xtk_dialog_handle_event(const XEvent *ev);
 bool xtk_dialog_active(void);
 

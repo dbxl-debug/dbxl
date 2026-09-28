@@ -20,6 +20,7 @@
  */
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <X11/keysym.h>
 #include <X11/Xutil.h>
 
@@ -438,6 +439,15 @@ static void key(xtk_pane *p, const XKeyEvent *kev, int x, int y, int fx, int fy)
     int col = x / m->char_w;
 
     switch (ks) {
+    case XK_Prior:                    /* Page Up / Page Down: a page */
+    case XK_Next: {
+        int rows = xtk_pane_rows(p), top = p->top + (ks == XK_Prior ? -rows : rows);
+        int max = p->nlines - rows;
+        if (top > max)
+            top = max;
+        xtk_pane_set_top(p, top > 0 ? top : 0);
+        return;
+    }
     case XK_Up:    warp_cell(p, row - 1, col); return;
     case XK_Down:  warp_cell(p, row + 1, col); return;
     case XK_Left:  warp_cell(p, row, col - 1); return;
@@ -534,4 +544,86 @@ bool xtk_pane_handle_event(xtk_pane *p, const XEvent *ev)
         break;
     }
     return true;
+}
+
+/*
+ * The pane's "cursor" is the pointer (recon pass 6): put it on a line and
+ * column, scrolling the line into view (centred) when it isn't visible.
+ */
+void xtk_pane_goto(xtk_pane *p, int line, int col)
+{
+    int rows = xtk_pane_rows(p);
+
+    if (line < 0)
+        line = 0;
+    if (line >= p->nlines && p->nlines > 0)
+        line = p->nlines - 1;
+    if (line < p->top || line >= p->top + rows) {
+        int top = line - rows / 2;
+        xtk_pane_set_top(p, top > 0 ? top : 0);
+    }
+    warp_cell(p, line - p->top, col);
+}
+
+/* Where the pointer is in the pane: its line and column. */
+void xtk_pane_cursor(const xtk_pane *p, int *line, int *col)
+{
+    const xtk_metrics *m = xtk_metrics_get();
+    int fx, fy;
+
+    xtk_pointer_frame(&fx, &fy);
+    *col = (fx - p->geom.x - 2) / m->char_w;
+    *line = p->top + (fy - p->geom.y - 2 - m->title_h - 1) / m->line_h;
+    if (*col < 0)
+        *col = 0;
+    if (*line < p->top)
+        *line = p->top;
+}
+
+static const char *find(const char *hay, const char *needle, bool fold)
+{
+    size_t n = strlen(needle);
+
+    for (; *hay; hay++)
+        if (fold ? strncasecmp(hay, needle, n) == 0 : strncmp(hay, needle, n) == 0)
+            return hay;
+    return NULL;
+}
+
+/*
+ * The next (dir > 0) or previous occurrence of s after/before the given
+ * position, wrapping around the text.  Returns false when there is none.
+ */
+bool xtk_pane_search(const xtk_pane *p, const char *s, int dir, bool fold,
+                     int line, int col, int *fline, int *fcol)
+{
+    int n = p->nlines;
+
+    if (!*s || n == 0)
+        return false;
+    for (int k = 0; k <= n; k++) {
+        int l = ((line + dir * k) % n + n) % n;
+        const char *text = p->lines[l];
+        const char *hit = NULL, *h = text;
+
+        /* The best match on this line, relative to the start column. */
+        while ((h = find(h, s, fold)) != NULL) {
+            int c = (int)(h - text);
+            bool ok = k > 0 || (dir > 0 ? c > col : c < col);
+            if (k == n)                       /* back on the start line */
+                ok = dir > 0 ? c <= col : c >= col;
+            if (ok) {
+                hit = h;
+                if (dir > 0)
+                    break;
+            }
+            h++;
+        }
+        if (hit) {
+            *fline = l;
+            *fcol = (int)(hit - text);
+            return true;
+        }
+    }
+    return false;
 }

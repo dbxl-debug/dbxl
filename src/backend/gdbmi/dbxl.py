@@ -24,6 +24,12 @@
 #   -dbxl-symbols                    the program's files and functions
 #   -dbxl-data-start                 where the program's data begins
 #
+#   -dbxl-types                      the program's type names (tags, typedefs)
+#
+# A --deref argument may also be "range:PATH:LO:HI" (show the pointer at
+# PATH as the elements PATH[LO..HI], as its children) or "cast:PATH:TYPE"
+# (the pointer at PATH points to TYPE).
+#
 # Paths name a node: the variable's name, then ".field", "[i]" or "*"
 # (through a pointer), e.g. "sp*.corners*".
 import gdb
@@ -123,6 +129,12 @@ def _c_string(addr):
 
 def _node(v, name, expr, path, deref):
     node = {"n": name, "e": expr}
+    cast = _CASTS.get(path)
+    if cast is not None:
+        try:
+            v = v.cast(_lookup_type(cast).pointer())
+        except (gdb.error, RuntimeError):
+            pass
     try:
         t = v.type
         st = t.strip_typedefs()
@@ -161,6 +173,13 @@ def _node(v, name, expr, path, deref):
             if path + "*" in deref and addr != 0:
                 node["p"] = _node(v.dereference(), "", "(*%s)" % expr,
                                   path + "*", deref)
+            rng = _RANGES.get(path)
+            if rng is not None and addr != 0:
+                lo, hi = rng
+                node["lo"] = str(lo)
+                node["ch"] = [_node(v[i], str(i), "(%s)[%d]" % (expr, i),
+                                    "%s[%d]" % (path, i), deref)
+                              for i in range(lo, min(hi, lo + MAX_ELEMENTS - 1) + 1)]
         elif kind == "array":
             lo, hi = st.range()
             node["lo"] = str(lo)
@@ -190,6 +209,62 @@ def _node(v, name, expr, path, deref):
     return node
 
 
+_RANGES = {}
+_CASTS = {}
+
+
+def _lookup_type(name):
+    for n in (name, "struct " + name, "union " + name, "enum " + name):
+        try:
+            return gdb.lookup_type(n)
+        except gdb.error:
+            continue
+    raise gdb.error("no type " + name)
+
+
+def _split_special(deref):
+    """Pull range: and cast: entries out of the --deref set."""
+    _RANGES.clear()
+    _CASTS.clear()
+    plain = set()
+    for d in deref:
+        if d.startswith("range:"):
+            try:
+                path, lo, hi = d[len("range:"):].rsplit(":", 2)
+                _RANGES[path] = (int(lo), int(hi))
+            except ValueError:
+                pass
+        elif d.startswith("cast:"):
+            path, _, t = d[len("cast:"):].rpartition(":")
+            if path:
+                _CASTS[path] = t
+        else:
+            plain.add(d)
+    return plain
+
+
+def _types():
+    """The program's own type names (defined in its source files), in
+    declaration order."""
+    own = {f["fullname"] for f in _symbols()[0]}
+    try:
+        info = gdb.execute_mi("-symbol-info-types")
+    except gdb.error:
+        return []
+    out, seen = [], set()
+    for f in info.get("symbols", {}).get("debug", []):
+        fullname = f.get("fullname") or f.get("filename")
+        if fullname not in own:
+            continue
+        entries = [e for e in f.get("symbols", []) if "line" in e]
+        entries.sort(key=lambda e: int(e["line"]))
+        for e in entries:
+            if e["name"] not in seen:
+                seen.add(e["name"])
+                out.append(e["name"])
+    return out
+
+
 def _frame(level):
     f = gdb.newest_frame()
     for _ in range(level):
@@ -199,7 +274,29 @@ def _frame(level):
     return f
 
 
-def _locals(level, deref):
+def _function_blocks(fblock):
+    """Every block inside a function, found through its line table."""
+    blocks, seen = [fblock], {(fblock.start, fblock.end)}
+    try:
+        symtab = fblock.function.symtab
+        pcs = [e.pc for e in symtab.linetable()
+               if fblock.start <= e.pc < fblock.end]
+    except (AttributeError, RuntimeError, gdb.error):
+        return blocks
+    for pc in sorted(set(pcs)):
+        b = gdb.block_for_pc(pc)
+        chain = []
+        while b is not None and b.function is None:
+            chain.append(b)
+            b = b.superblock
+        for blk in reversed(chain):
+            if (blk.start, blk.end) not in seen:
+                seen.add((blk.start, blk.end))
+                blocks.append(blk)
+    return blocks
+
+
+def _locals(level, deref, all_blocks=False):
     frame = _frame(level)
     try:
         block = frame.block()
@@ -213,6 +310,9 @@ def _locals(level, deref):
             break
         block = block.superblock
     blocks.reverse()
+    if all_blocks and blocks and blocks[0].function is not None:
+        # Local variables: All -- inactive blocks too (xldb's option).
+        blocks = _function_blocks(blocks[0])
     args, local_vars, seen = [], [], set()
     for b in blocks:
         for sym in b:
@@ -298,11 +398,16 @@ def _registers(level, names):
     return out
 
 
-def _symbols():
-    """Files and functions with debug info in the program itself."""
-    progname = gdb.current_progspace().filename
+def _symbols(all_functions=False):
+    """Files and functions with debug info in the program itself; with
+    all_functions, its other functions too, in address order."""
+    progspace = gdb.current_progspace()
+    progname = progspace.filename
     try:
-        info = gdb.execute_mi("-symbol-info-functions")
+        if all_functions:
+            info = gdb.execute_mi("-symbol-info-functions", "--include-nondebug")
+        else:
+            info = gdb.execute_mi("-symbol-info-functions")
     except gdb.error:
         return [], []
     files, funcs, seen = [], [], set()
@@ -325,8 +430,25 @@ def _symbols():
                 seen.add(fullname)
                 files.append({"file": f.get("filename", "").split("/")[-1],
                               "fullname": fullname})
+    if all_functions:
+        known = {f["name"] for f in funcs}
+        for e in info.get("symbols", {}).get("nondebug", []):
+            try:
+                addr = int(e["address"], 16)
+                objfile = progspace.objfile_for_address(addr)
+            except (gdb.error, KeyError, ValueError, AttributeError):
+                continue
+            if objfile is None or objfile.filename != progname:
+                continue
+            if e["name"] in known:
+                continue
+            known.add(e["name"])
+            funcs.append({"name": e["name"], "file": "", "fullname": "",
+                          "line": "0", "addr": "%x" % addr})
+        funcs.sort(key=lambda x: int(x["addr"], 16))
+    else:
+        funcs.sort(key=lambda x: x["name"])
     files.sort(key=lambda x: x["file"])
-    funcs.sort(key=lambda x: x["name"])
     return files, funcs
 
 
@@ -338,6 +460,14 @@ def _data_start():
         except gdb.error:
             continue
     return 0
+
+
+class DbxlTypes(gdb.MICommand):
+    def __init__(self):
+        super().__init__("-dbxl-types")
+
+    def invoke(self, argv):
+        return {"types": _types()}
 
 
 class DbxlRegisters(gdb.MICommand):
@@ -353,7 +483,7 @@ class DbxlSymbols(gdb.MICommand):
         super().__init__("-dbxl-symbols")
 
     def invoke(self, argv):
-        files, funcs = _symbols()
+        files, funcs = _symbols("--all" in argv)
         return {"files": files, "functions": funcs}
 
 
@@ -380,16 +510,20 @@ class DbxlValues(gdb.MICommand):
             else:
                 rest.append(argv[i])
                 i += 1
+        deref = _split_special(deref)
         ptrsize = str(gdb.lookup_type("void").pointer().sizeof)
         if argv[0] == "locals":
+            all_blocks = "--all" in rest
+            rest = [r for r in rest if r != "--all"]
             level = int(rest[0]) if rest else 0
-            return {"ptrsize": ptrsize, "vars": _locals(level, deref)}
+            return {"ptrsize": ptrsize, "vars": _locals(level, deref, all_blocks)}
         if argv[0] == "globals":
             return {"ptrsize": ptrsize, "files": _globals(deref)}
         raise gdb.GdbError("-dbxl-values: unknown scope " + argv[0])
 
 
 DbxlValues()
+DbxlTypes()
 DbxlRegisters()
 DbxlSymbols()
 DbxlDataStart()

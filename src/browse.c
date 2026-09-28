@@ -7,11 +7,13 @@
  * first line (the `{`) in cyan, and its disassembly with the first
  * instruction in cyan.  Each click drops the other list's highlight.
  */
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "browse.h"
+#include "core/options.h"
 #include "core/layout.h"
 #include "debugger.h"
 #include "machine.h"
@@ -28,7 +30,11 @@ static void set_list(int window, const dbg_symbol *syms, int n, bool funcs)
     const char **lines = calloc((size_t)(n ? n : 1), sizeof *lines);
 
     for (int i = 0; i < n; i++) {
-        if (funcs)
+        if (funcs && dbxl_opt.subprograms_all)
+            /* Subprograms: All -- `<address>:   name()` (recon pass 15). */
+            snprintf(text[i], sizeof text[i], "%016" PRIx64 ":   %s()",
+                     syms[i].addr, syms[i].name);
+        else if (funcs)
             snprintf(text[i], sizeof text[i], "%s()", syms[i].name);
         else
             snprintf(text[i], sizeof text[i], "%s", syms[i].file);
@@ -77,4 +83,10 @@ void dbxl_browse_click(int window, const xtk_pane_event *e)
         dbxl_debug_show_location(f->file, f->fullname, f->line, false);
         dbxl_machine_show_function(f->addr);
     }
+}
+
+int dbxl_browse_functions(const dbg_symbol **funcs)
+{
+    *funcs = br.funcs;
+    return br.nfuncs;
 }

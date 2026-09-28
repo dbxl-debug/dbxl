@@ -73,6 +73,9 @@ typedef struct dbg_value_group {
 
 enum dbg_scope { DBG_SCOPE_LOCALS, DBG_SCOPE_GLOBALS };
 
+/* values() flags */
+enum { DBG_VALUES_ALL_BLOCKS = 1 };     /* locals of inactive blocks too */
+
 typedef struct dbg_values {
     enum dbg_scope scope;
     int level;                     /* locals: the frame */
@@ -148,6 +151,7 @@ enum dbg_event_type {
     DBG_EV_DATA_START,             /* addr */
     DBG_EV_MEMORY,                 /* addr, bytes, nbytes */
     DBG_EV_THREADS,                /* threads, nthreads */
+    DBG_EV_TYPES,                  /* names, nnames */
     DBG_EV_ERROR,                  /* message, request, cookie */
     DBG_EV_DIED,                   /* the engine went away */
 };
@@ -173,6 +177,7 @@ enum dbg_request {
     DBG_REQ_MEMORY,
     DBG_REQ_WRITE_MEMORY,
     DBG_REQ_THREADS,
+    DBG_REQ_TYPES,
 };
 
 typedef struct dbg_event {
@@ -195,6 +200,8 @@ typedef struct dbg_event {
     int nfiles, nfuncs;
     const dbg_thread *threads;
     int nthreads;
+    const char *const *names;
+    int nnames;
     uint64_t addr;
     const unsigned char *bytes;
     int nbytes;
@@ -236,10 +243,13 @@ struct dbg_backend_ops {
     /*
      * Values: a frame's locals or all globals, as trees.  Pointers are
      * followed only at the given paths ("sp*", "sp*.corners*": a variable
-     * name, then ".field", "[i]" or "*").
+     * name, then ".field", "[i]" or "*").  Entries "range:PATH:LO:HI" show
+     * the pointer at PATH as its elements LO..HI (its children), and
+     * "cast:PATH:TYPE" makes it point to TYPE.
      */
     void (*values)(dbg_backend *b, enum dbg_scope scope, int level,
-                   const char *const *deref, int nderef, void *cookie);
+                   const char *const *deref, int nderef, unsigned flags,
+                   void *cookie);
     /* expr = text, in the program's language. */
     void (*assign)(dbg_backend *b, const char *expr, const char *text,
                    void *cookie);
@@ -249,12 +259,16 @@ struct dbg_backend_ops {
     /* Registers by debugger name ("rax"; "xmm0:64" is a low lane). */
     void (*registers)(dbg_backend *b, int level, const char *const *names,
                       int n, void *cookie);
-    void (*symbols)(dbg_backend *b, void *cookie);
+    /* Files and functions; all: functions without debug information too
+     * (then in address order, else by name). */
+    void (*symbols)(dbg_backend *b, bool all, void *cookie);
     void (*data_start)(dbg_backend *b, void *cookie);
     void (*read_memory)(dbg_backend *b, uint64_t addr, int len, void *cookie);
     void (*write_memory)(dbg_backend *b, uint64_t addr,
                          const unsigned char *bytes, int len, void *cookie);
     void (*threads)(dbg_backend *b, void *cookie);
+    /* The program's own type names (for Cast), in declaration order. */
+    void (*types)(dbg_backend *b, void *cookie);
 };
 
 struct dbg_backend {

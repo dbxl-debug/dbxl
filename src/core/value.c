@@ -44,6 +44,17 @@ dbxl_vstate *dbxl_vstate_get(const char *key, bool create)
     return &entries[nentries++].st;
 }
 
+void dbxl_vstate_foreach(const char *prefix,
+                         void (*fn)(const char *key, dbxl_vstate *s, void *arg),
+                         void *arg)
+{
+    size_t n = strlen(prefix);
+
+    for (int i = 0; i < nentries; i++)
+        if (strncmp(entries[i].key, prefix, n) == 0)
+            fn(entries[i].key, &entries[i].st, arg);
+}
+
 static int own_detail(const char *key)
 {
     dbxl_vstate *s = dbxl_vstate_get(key, false);
@@ -367,9 +378,10 @@ static void render_aggregate(dbxl_render *r, const dbg_value *v,
                              const char *scope, const char *path, int detail,
                              bool flat)
 {
-    bool array = v->kind == DBG_K_ARRAY;
+    bool array = v->kind == DBG_K_ARRAY || v->kind == DBG_K_POINTER;
     int start = col(r);
     char cpath[520];
+    dbxl_vstate *range;
 
     if (detail <= 1) {
         if (array)
@@ -382,9 +394,21 @@ static void render_aggregate(dbxl_render *r, const dbg_value *v,
     }
     put(r, array ? "[ " : "{ ");
     start = col(r);
-    for (int i = 0; i < v->nchildren; i++) {
+    {
+        char key[600];
+        dbxl_vstate *st;
+
+        make_key(key, sizeof key, scope, path);
+        st = dbxl_vstate_get(key, false);
+        range = array && st && st->has_range && v->kind == DBG_K_ARRAY ? st : NULL;
+    }
+    for (int i = 0, shown = 0; i < v->nchildren; i++) {
         const dbg_value *c = &v->children[i];
         int cd;
+
+        /* Select subrange on an array shows only those elements. */
+        if (range && (v->lo + i < range->lo || v->lo + i > range->hi))
+            continue;
 
         if (array)
             snprintf(cpath, sizeof cpath, "%s[%ld]", path, v->lo + i);
@@ -396,20 +420,21 @@ static void render_aggregate(dbxl_render *r, const dbg_value *v,
             char label[64];
 
             /* Vertical: one per line, aligned after the opening bracket. */
-            if (i > 0)
+            if (shown > 0)
                 new_line(r, start);
             if (array)
                 snprintf(label, sizeof label, "[%2ld]: ", v->lo + i);
             else
                 snprintf(label, sizeof label, "%s: ", c->name);
             put(r, label);
-        } else if (i > 0) {
-            if (array && i % 10 == 0)
+        } else if (shown > 0) {
+            if (array && shown % 10 == 0)
                 new_line(r, start);
             else
                 put(r, " ");
         }
         render(r, c, scope, cpath, cd, flat);
+        shown++;
     }
     put(r, array ? " ]" : " }");
 }
@@ -443,6 +468,22 @@ static void render(dbxl_render *r, const dbg_value *v, const char *scope,
         }
         break;
     case DBG_K_POINTER:
+        if (v->nchildren > 0) {
+            /* Select subrange: the pointer as an array of those elements
+             * (recon pass 15: `c: [ point{} point{} point{} ]`). */
+            render_aggregate(r, v, scope, path, detail > 2 ? detail : 2, flat);
+            break;
+        }
+        {
+            dbxl_vstate *s0 = dbxl_vstate_get(key, false);
+            if (s0 && s0->cast[0] && st == STYLE_POINTER &&
+                (flat ? own_detail(key) : detail) <= 1) {
+                /* After Cast: `( -> shape-struct )`. */
+                snprintf(text, sizeof text, "( %s )", v->type_style);
+                put(r, text);
+                break;
+            }
+        }
         if (st != STYLE_POINTER || strtoull(v->value, NULL, 16) == 0 ||
             (flat ? own_detail(key) : detail) <= 1) {
             dbxl_format_value(v, key, r->ptrsize, text, sizeof text);

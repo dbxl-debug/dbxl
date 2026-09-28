@@ -223,6 +223,39 @@ d = display.Display(); d.screen().root.warp_pointer($((640 * n)), $((512 * n)));
 echo "milestone 5a scenario:"
 m5 "$disp" 1 "$out/m5"
 
+# --- milestone 5b scenario: options files, variable menu, Help -----------
+# It saves tests/progs/.dbxl.rich (loaded at the first stop if present, so
+# removed first) and /tmp/layout.
+m6() {   # display scale outdir
+    d=$1; n=$2; o=$3
+    rm -f "$top/tests/progs/.dbxl.rich" /tmp/layout
+    DISPLAY=$d python3 -c "
+from Xlib import display
+d = display.Display(); d.screen().root.warp_pointer($((640 * n)), $((512 * n))); d.sync()"
+    (cd "$top/tests/progs" && DISPLAY=$d exec "$top/dbxl" -scale "$n" ./rich) \
+        >"$o.log" 2>&1 &
+    dbxl=$!
+    i=0
+    until DISPLAY=$d xwininfo -name "dbxl rich" >/dev/null 2>&1; do
+        i=$((i + 1)); [ $i -gt 50 ] && { echo "dbxl ./rich did not appear"; exit 1; }
+        sleep 0.1
+    done
+    sleep 2
+    rm -rf "$o"
+    mkdir -p "$o"
+    if python3 "$top/tests/visual/scenario_m6.py" "$d" "$o" --wait 1.2 --scale "$n" \
+            >"$o/scenario.log" 2>&1 &&
+       python3 "$top/tests/visual/m6_compare.py" "$o" "$ref" "$o" "$n"; then
+        :
+    else
+        echo "  FAIL (see $o)"
+        fail=1
+    fi
+    kill "$dbxl" 2>/dev/null || true; wait "$dbxl" 2>/dev/null || true; dbxl=
+}
+echo "milestone 5b scenario:"
+m6 "$disp" 1 "$out/m6"
+
 # --- startup at scales 2-4: must equal the reference enlarged NxN ---------
 # The frame's logical geometry is multiplied by N, so it is at (33N, 73N).
 # The pointer is placed at logical (640,512), inside Source, as at scale 1.
@@ -305,5 +338,8 @@ m4 "$big" 2 "$out/m4-x2"
 
 echo "milestone 5a scenario -scale 2:"
 m5 "$big" 2 "$out/m5-x2"
+
+echo "milestone 5b scenario -scale 2:"
+m6 "$big" 2 "$out/m6-x2"
 
 exit $fail

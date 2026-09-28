@@ -58,6 +58,8 @@ struct gdbmi {
     dbg_symbol *syms;
     dbg_thread *threads;
     unsigned char *bytes;
+    char **names;
+    int nnames;
 };
 
 static void emit(struct gdbmi *g, dbg_event *ev)
@@ -489,6 +491,25 @@ static void on_result(struct gdbmi *g, const mi_record *r)
         emit(g, &ev);
         break;
     }
+    case DBG_REQ_TYPES: {
+        const mi_value *list = mi_get(r->results, "types");
+
+        for (int i = 0; i < g->nnames; i++)
+            free(g->names[i]);
+        free(g->names);
+        g->nnames = 0;
+        for (const mi_value *c = list ? list->child : NULL; c; c = c->next)
+            g->nnames++;
+        g->names = calloc((size_t)g->nnames + 1, sizeof *g->names);
+        g->nnames = 0;
+        for (const mi_value *c = list ? list->child : NULL; c; c = c->next)
+            g->names[g->nnames++] = strdup(c->str ? c->str : "");
+        ev.type = DBG_EV_TYPES;
+        ev.names = (const char *const *)g->names;
+        ev.nnames = g->nnames;
+        emit(g, &ev);
+        break;
+    }
     case DBG_REQ_BP_DELETE:
         ev.type = DBG_EV_BP_DELETED;
         ev.bp.id = p.id;
@@ -820,6 +841,9 @@ static void gdbmi_shutdown(dbg_backend *b)
     free(g->syms);
     free(g->threads);
     free(g->bytes);
+    for (int i = 0; i < g->nnames; i++)
+        free(g->names[i]);
+    free(g->names);
     if (g->log)
         fclose(g->log);
     free(g->buf);
@@ -888,15 +912,16 @@ static void gdbmi_frames(dbg_backend *b, int max)
 }
 
 static void gdbmi_values(dbg_backend *b, enum dbg_scope scope, int level,
-                         const char *const *deref, int nderef, void *cookie)
+                         const char *const *deref, int nderef, unsigned flags,
+                         void *cookie)
 {
     struct gdbmi *g = (struct gdbmi *)b;
     size_t cap = 256, n = 0;
     char *args = malloc(cap), q[1100];
 
-    n = (size_t)snprintf(args, cap, scope == DBG_SCOPE_LOCALS ? "locals %d"
+    n = (size_t)snprintf(args, cap, scope == DBG_SCOPE_LOCALS ? "locals %d%s"
                                                               : "globals",
-                         level);
+                         level, flags & DBG_VALUES_ALL_BLOCKS ? " --all" : "");
     for (int i = 0; i < nderef; i++) {
         size_t need;
 
@@ -966,9 +991,10 @@ static void gdbmi_registers(dbg_backend *b, int level, const char *const *names,
           "-dbxl-registers %d%s", level, args);
 }
 
-static void gdbmi_symbols(dbg_backend *b, void *cookie)
+static void gdbmi_symbols(dbg_backend *b, bool all, void *cookie)
 {
-    sendf((struct gdbmi *)b, DBG_REQ_SYMBOLS, cookie, 0, "-dbxl-symbols");
+    sendf((struct gdbmi *)b, DBG_REQ_SYMBOLS, cookie, 0, "-dbxl-symbols%s",
+          all ? " --all" : "");
 }
 
 static void gdbmi_data_start(dbg_backend *b, void *cookie)
@@ -998,6 +1024,11 @@ static void gdbmi_write_memory(dbg_backend *b, uint64_t addr,
 static void gdbmi_threads(dbg_backend *b, void *cookie)
 {
     sendf((struct gdbmi *)b, DBG_REQ_THREADS, cookie, 0, "-thread-info");
+}
+
+static void gdbmi_types(dbg_backend *b, void *cookie)
+{
+    sendf((struct gdbmi *)b, DBG_REQ_TYPES, cookie, 0, "-dbxl-types");
 }
 
 static int gdbmi_pid(dbg_backend *b)
@@ -1033,6 +1064,7 @@ static const struct dbg_backend_ops ops = {
     .read_memory = gdbmi_read_memory,
     .write_memory = gdbmi_write_memory,
     .threads = gdbmi_threads,
+    .types = gdbmi_types,
 };
 
 dbg_backend *dbg_gdbmi_create(dbg_event_fn fn, void *arg)

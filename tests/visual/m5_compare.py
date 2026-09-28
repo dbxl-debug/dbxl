@@ -30,7 +30,6 @@ STORAGE = "8,394,594,427"          # Storage rows
 THREAD_ROW = "7,170,784,13"        # the thread's id and state
 MESSAGE = "3,826,953,18"           # a message with an address in it
 STORAGE_TITLE = "6,379,594,15"     # `Change Block at Address: <addr>`
-SOURCE = "5,379,952,422"           # see m5-13 below
 MACHINE = [DIS, REGS, STORAGE, THREAD_ROW]
 
 
@@ -45,10 +44,6 @@ def masks_for(name):
     # stale after Escape, where dbxl restores `Storage Pane` (DESIGN.md 11).
     if name in ("m5-42-storage-edit", "m5-43-storage-edit-escape"):
         m.append(STORAGE_TITLE)
-    # After a trigger is set xldb scrolls Source to top line 20 (line 47 on
-    # row 27) for a reason not yet understood (recon pass 14).
-    if name == "m5-13-conditional":
-        m.append(SOURCE)
     return m
 
 

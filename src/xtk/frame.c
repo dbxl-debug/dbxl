@@ -107,3 +107,15 @@ void xtk_pointer_frame(int *fx, int *fy)
     XQueryPointer(xtk_dpy(), frame, &r, &c, &rx, &ry, &wx, &wy, &mask);
     xtk_root_to_frame(rx, ry, fx, fy);
 }
+
+xtk_rect xtk_frame_geometry(void)
+{
+    Window child;
+    int x = 0, y = 0, n = xtk_scale();
+
+    /* The frame's outer corner on the screen, logical. */
+    XTranslateCoordinates(xtk_dpy(), xtk_frame(),
+                          DefaultRootWindow(xtk_dpy()), 0, 0, &x, &y, &child);
+    return (xtk_rect){ x / n - xtk_metrics_get()->border,
+                       y / n - xtk_metrics_get()->border, fgeom.w, fgeom.h };
+}

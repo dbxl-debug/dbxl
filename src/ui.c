@@ -15,6 +15,7 @@
 #include "browse.h"
 #include "data.h"
 #include "debugger.h"
+#include "help.h"
 #include "machine.h"
 #include "ui.h"
 #include "xtk/xtk.h"
@@ -42,6 +43,7 @@ static struct {
     int ncmd;
     bool confirm_exit;
     int wc_default;              /* sticky default item of Window Control */
+    bool special_layout;         /* the specialLayout resource */
     bool message_shown;
 } ui;
 
@@ -188,7 +190,8 @@ static void wc_selected(xtk_menu *m, int item, int button, void *arg)
                                 xtk_pane_scrollbars(w->pane) ^ XTK_SB_VERTICAL);
         break;
     case WC_SAVE:
-        xtk_dialog_prompt("Enter the target file name", "", "proceed",
+        /* xldb's title ends with a space, which shifts it left. */
+        xtk_dialog_prompt("Enter the target file name ", "", "proceed",
                           "cancel", ax, ay, save_window_done, w->pane);
         break;
     }
@@ -232,6 +235,103 @@ static void register_control(int ax, int ay)
     xtk_menu_open_anchored(&spec, ax, ay, registers_selected, NULL);
 }
 
+/*
+ * Save layout (recon pass 15): the resources that recreate this layout,
+ * named for this program (dbxl, or -name), in xldb's order.
+ */
+static const char *sb_name(int flags)
+{
+    switch (flags) {
+    case XTK_SB_VERTICAL: return "vertical";
+    case XTK_SB_HORIZONTAL: return "horizontal";
+    case XTK_SB_VERTICAL | XTK_SB_HORIZONTAL: return "both";
+    default: return "none";
+    }
+}
+
+static void put_geom(FILE *f, const char *name, const char *res, xtk_rect g)
+{
+    fprintf(f, "%s.%s:%dx%d+%d+%d\n", dbxl_res_name(), res, g.w, g.h, g.x, g.y);
+    (void)name;
+}
+
+static int save_layout(const char *file)
+{
+    static const char *const order[] = {
+        "Callers", "Files", "Subprograms", "Breakpoints", "Commands", "Source",
+        "Locals", "Globals", "Monitor", "Formats", "Messages", "Help",
+        "Disassembly", "Registers", "Storage", "Threads",
+    };
+    const char *n = dbxl_res_name();
+    FILE *f = fopen(file, "w");
+    xtk_rect fr = xtk_frame_geometry();
+
+    if (!f)
+        return -1;
+    fprintf(f, "%s.AutoRaise:%s\n", n, dbxl_opt.autoraise ? "on" : "off");
+    fprintf(f, "%s.FunctionList:%s\n", n,
+            dbxl_opt.subprograms_all ? "All" : "With -g  only");
+    fprintf(f, "%s.specialLayout:true\n", n);
+    fprintf(f, "%s.geometry:%dx%d+%d+%d\n", n, fr.w, fr.h, fr.x, fr.y);
+    for (size_t k = 0; k < sizeof order / sizeof order[0]; k++) {
+        char res[64];
+
+        if (strcmp(order[k], "Formats") == 0) {
+            xtk_rect g = dbxl_data_formats_geometry();
+            put_geom(f, order[k], "FormatsGeometry", g);
+            put_geom(f, order[k], "FormatsIconGeometry",
+                     (xtk_rect){ g.x, g.y, g.w, 12 });
+            continue;
+        }
+        for (int i = 0; i < DBXL_NWINDOWS; i++) {
+            const struct dbxl_window_def *d = dbxl_window_def(i);
+            struct window *w = &ui.w[i];
+
+            if (strcmp(d->name, order[k]) != 0)
+                continue;
+            snprintf(res, sizeof res, "%sGeometry", d->name);
+            put_geom(f, d->name, res, xtk_pane_geometry(w->pane));
+            snprintf(res, sizeof res, "%sIconGeometry", d->name);
+            put_geom(f, d->name, res, xtk_chip_geometry(w->chip));
+            if (i == DBXL_W_MESSAGES)
+                break;
+            fprintf(f, "%s.%sIconStartup:%s\n", n, d->name,
+                    xtk_chip_mapped(w->chip) ? "true" : "false");
+            fprintf(f, "%s.%sScrollbars:%s\n", n, d->name,
+                    sb_name(xtk_pane_scrollbars(w->pane)));
+        }
+    }
+    return fclose(f);
+}
+
+static void save_layout_done(int button, const char *text, void *arg)
+{
+    char msg[600];
+
+    (void)arg;
+    if (button != 0)
+        return;
+    if (!text[0] || save_layout(text) != 0)
+        snprintf(msg, sizeof msg, "Unable to save window layout in file %s.", text);
+    else
+        snprintf(msg, sizeof msg, "Window layout saved in file %s.", text);
+    dbxl_ui_message(msg);
+}
+
+static void save_breakpoints_done(int button, const char *text, void *arg)
+{
+    (void)arg;
+    if (button == 0 && text[0])
+        dbxl_debug_save_breakpoints(text);
+}
+
+static void load_breakpoints_done(int button, const char *text, void *arg)
+{
+    (void)arg;
+    if (button == 0 && text[0])
+        dbxl_debug_load_breakpoints(text);
+}
+
 static void source_path_done(int button, const char *text, void *arg)
 {
     (void)arg;
@@ -242,10 +342,13 @@ static void source_path_done(int button, const char *text, void *arg)
 static void options_selected(xtk_menu *m, int item, int button, void *arg)
 {
     char buf[64];
-    int ax, ay;
+    int ax, ay, px, py;
 
     (void)arg;
     xtk_menu_anchor(m, &ax, &ay);
+    /* The dialogs warp back to the chosen item, not to Options (recon
+     * pass 16). */
+    xtk_pointer_frame(&px, &py);
     switch (item) {
     case OPT_REGISTER_CONTROL:
         /* The submenu replaces the Options menu at the same anchor. */
@@ -255,17 +358,31 @@ static void options_selected(xtk_menu *m, int item, int button, void *arg)
     case OPT_SOURCE_PATH:
         xtk_menu_close(m, true);
         xtk_dialog_prompt("Edit source search path", dbxl_opt.source_path,
-                          "proceed", "cancel", ax, ay, source_path_done, NULL);
+                          "proceed", "cancel", px, py, source_path_done, NULL);
         return;
     case OPT_SAVE_LAYOUT:
+        xtk_menu_close(m, true);
+        xtk_dialog_prompt("layout file name", "", "proceed", "cancel", px, py,
+                          save_layout_done, NULL);
+        return;
     case OPT_SAVE_BREAKPOINTS:
     case OPT_LOAD_BREAKPOINTS:
         xtk_menu_close(m, true);
+        /* xldb titles both dialogs this way (recon pass 15). */
+        xtk_dialog_prompt("save breakpoints file name",
+                          dbxl_debug_breakpoints_file(), "proceed", "cancel",
+                          px, py, item == OPT_SAVE_BREAKPOINTS
+                                      ? save_breakpoints_done
+                                      : load_breakpoints_done, NULL);
         return;
     }
     if (dbxl_options_cycle(item, button != Button3)) {
         if (item == OPT_AUTORAISE)
             xtk_pane_set_autoraise(dbxl_opt.autoraise);
+        else if (item == OPT_SUBPROGRAMS || item == OPT_LOCAL_VARIABLES)
+            dbxl_debug_options_changed(item);
+        else if (item == OPT_BREAK_ALL && dbxl_opt.break_all)
+            dbxl_debug_break_all();
         dbxl_options_item(item, buf, sizeof buf);
         xtk_menu_set_item(m, item, buf);   /* the menu stays open */
     }
@@ -320,7 +437,7 @@ static void run_command(const struct dbxl_command *c, int ax, int ay)
                           ax, ay, breakpoint_done, NULL);
         break;
     case ACT_HELP:
-        open_window(DBXL_W_HELP);
+        dbxl_help_open();
         break;
     case ACT_CONTINUE:
     case ACT_NEXT:
@@ -346,6 +463,33 @@ static void accelerator(char key, int ax, int ay)
         }
 }
 
+/* ---- the input strip: :n, /x, \\x, ?x (xldb's help, 3.1) -------------- */
+
+static char last_search[256];
+
+static void strip_command(xtk_pane *p, const char *text)
+{
+    int line, col, fl, fc, dir;
+    const char *s;
+
+    if (!text || !text[0])
+        return;
+    xtk_pane_cursor(p, &line, &col);
+    if (text[0] == ':') {
+        if (text[1] >= '0' && text[1] <= '9')
+            xtk_pane_goto(p, atoi(text + 1) - 1, 0);
+        return;
+    }
+    dir = text[0] == '/' ? 1 : -1;
+    s = text + 1;
+    if (*s)
+        snprintf(last_search, sizeof last_search, "%s", s);
+    else
+        s = last_search;
+    if (xtk_pane_search(p, s, dir, !dbxl_opt.case_sensitive, line, col, &fl, &fc))
+        xtk_pane_goto(p, fl, fc);
+}
+
 /* ---- pane input -------------------------------------------------------- */
 
 static void pane_event(xtk_pane *p, const xtk_pane_event *e, void *arg)
@@ -357,8 +501,13 @@ static void pane_event(xtk_pane *p, const xtk_pane_event *e, void *arg)
     switch (e->type) {
     case XTK_PANE_TITLE_CLICK:
         clear_message();
-        if (e->button == Button1)
-            window_control(i, e->fx, e->fy);
+        if (e->button != Button1)
+            break;
+        /* Help's title has [exit][index][return] (recon pass 15). */
+        if (i == DBXL_W_HELP &&
+            dbxl_help_title_click(e->x, xtk_pane_geometry(p).w))
+            break;
+        window_control(i, e->fx, e->fy);
         break;
     case XTK_PANE_CLICK:
         clear_message();
@@ -379,6 +528,8 @@ static void pane_event(xtk_pane *p, const xtk_pane_event *e, void *arg)
             dbxl_data_click(i, e);
         } else if (i == DBXL_W_GLOBALS || i == DBXL_W_MONITOR) {
             dbxl_ui_message("Click on a data object.");
+        } else if (i == DBXL_W_HELP) {
+            dbxl_help_click(e->line);
         } else if (i == DBXL_W_CALLERS && dbxl_debug_active()) {
             dbxl_debug_select_frame(e->line);
         } else if (i == DBXL_W_BREAKPOINTS && dbxl_debug_active()) {
@@ -396,7 +547,7 @@ static void pane_event(xtk_pane *p, const xtk_pane_event *e, void *arg)
             accelerator(e->text[0], e->fx, e->fy);
         break;
     case XTK_PANE_STRIP_DONE:
-        /* ":n" and searches act on source text (milestone 3). */
+        strip_command(p, e->text);
         break;
     }
 }
@@ -431,6 +582,12 @@ static xtk_rect parse_geometry(const char *s, xtk_rect dflt)
     return dflt;
 }
 
+/* A per-window layout resource, only with specialLayout. */
+static const char *layout_res(const char *resource)
+{
+    return ui.special_layout ? dbxl_res_str(resource) : NULL;
+}
+
 static bool global_event(const XEvent *ev, void *arg)
 {
     (void)arg;
@@ -454,6 +611,9 @@ void dbxl_ui_init(const struct dbxl_ui_config *cfg)
     ui.wc_default = WC_MINIMIZE;
     xtk_pane_set_autoraise(dbxl_opt.autoraise);
 
+    /* xldb uses the per-window layout resources only with specialLayout
+     * true (its help, "Configuring xldb using .Xdefaults"). */
+    ui.special_layout = dbxl_res_bool("specialLayout", false);
     for (int i = 0; i < DBXL_NWINDOWS; i++) {
         const struct dbxl_window_def *d = dbxl_window_def(i);
         struct window *w = &ui.w[i];
@@ -463,16 +623,16 @@ void dbxl_ui_init(const struct dbxl_ui_config *cfg)
         enum dbxl_start start = d->start;
 
         snprintf(res, sizeof res, "%sGeometry", d->name);
-        geom = parse_geometry(dbxl_res_str(res), d->geom);
+        geom = parse_geometry(layout_res(res), d->geom);
         snprintf(res, sizeof res, "%sIconGeometry", d->name);
-        icon = parse_geometry(dbxl_res_str(res), d->icon);
+        icon = parse_geometry(layout_res(res), d->icon);
         icon.h = d->icon.h;                  /* chips are one title high */
         snprintf(res, sizeof res, "%sScrollbars", d->name);
-        sb = parse_scrollbars(dbxl_res_str(res), d->scrollbars);
+        sb = parse_scrollbars(layout_res(res), d->scrollbars);
         snprintf(res, sizeof res, "%sIconStartup", d->name);
         /* Help, Messages and Formats start hidden whatever IconStartup says. */
         if (start != DBXL_START_HIDDEN) {
-            const char *v = dbxl_res_str(res);
+            const char *v = layout_res(res);
             if (v)
                 start = dbxl_res_bool(res, false) ? DBXL_START_ICON
                                                   : DBXL_START_OPEN;
@@ -509,7 +669,9 @@ void dbxl_ui_init(const struct dbxl_ui_config *cfg)
         xtk_pane_set_lines(ui.w[DBXL_W_MONITOR].pane, monitor, 1);
         xtk_pane_set_lines(ui.w[DBXL_W_THREADS].pane, threads, 2);
     }
-    dbxl_data_init();
+    /* "Formats" is xldb's name for the variable menu (recon pass 15). */
+    dbxl_data_init(parse_geometry(layout_res("FormatsGeometry"),
+                                  DBXL_FORMATS_GEOMETRY));
     dbxl_machine_init();
     xtk_loop_add_handler(global_event, NULL);
 }

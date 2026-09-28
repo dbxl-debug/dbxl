@@ -20,6 +20,8 @@ struct dbxl_debug_config {
     const char *edit;             /* edit command, %d line, %s file */
     const char *const *include;   /* -I directories, appended to the path */
     int ninclude;
+    const char *breakpoints_file; /* the breakpointsFile resource */
+    bool load_breakpoints;        /* loadBreakpoints (and not -k) */
 };
 
 void dbxl_debug_init(const struct dbxl_debug_config *cfg);
@@ -41,9 +43,18 @@ unsigned char dbxl_debug_addr_marks(uint64_t addr);
 void dbxl_debug_toggle_addr(uint64_t addr);
 /* A click in the Breakpoints window. */
 void dbxl_debug_breakpoints_click(const xtk_pane_event *e);
-/* A variable menu's Breakpoint: a trigger on the current line. */
+/* A variable menu's Breakpoint: a trigger on the current line.  shown is
+ * the trigger as typed, trigger the same with each value as a literal. */
 void dbxl_debug_break_trigger(const char *label, const char *expr,
-                              const char *trigger, bool is_signed);
+                              const char *shown, const char *trigger,
+                              bool is_signed);
+/* Options: the breakpoints file (default .dbxl.<program>), saving and
+ * loading it, Breakpoint all Subprograms, and options that refetch. */
+const char *dbxl_debug_breakpoints_file(void);
+void dbxl_debug_save_breakpoints(const char *file);
+void dbxl_debug_load_breakpoints(const char *file);
+void dbxl_debug_break_all(void);
+void dbxl_debug_options_changed(int item);
 /* The Breakpoint dialog: a breakpoint at a function's entry. */
 void dbxl_debug_break_function(const char *name);
 

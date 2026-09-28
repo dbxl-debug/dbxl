@@ -4,3 +4,4 @@
 /tests/progs/test
 /tests/progs/rich
 __pycache__/
+/tests/progs/.dbxl.*

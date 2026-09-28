@@ -45,7 +45,7 @@ struct bp {
 
 /* What a breakpoint request was for. */
 enum { REQ_TOGGLE = 1, REQ_FUNCTION, REQ_QUIET, REQ_ADDR, REQ_COND_NEW,
-       REQ_COND, REQ_ENABLE, REQ_DISABLE };
+       REQ_COND, REQ_ENABLE, REQ_DISABLE, REQ_LOAD };
 
 static struct {
     struct dbxl_debug_config cfg;
@@ -68,6 +68,8 @@ static struct {
     char pending_label[1300];      /* ... and its Breakpoints text */
     bool have_symbols;            /* Files/Subprograms requested */
     int bp_selected;              /* Breakpoints row with the menu open */
+    char bp_file[1024];           /* the breakpoints file, last used */
+    bool auto_loaded;             /* loadBreakpoints done */
 } dbg;
 
 static int watched_fd = -1;       /* the backend's descriptor */
@@ -349,17 +351,25 @@ static void on_bp_set(const dbg_event *ev)
     char msg[128];
 
     if (kind == REQ_COND_NEW) {
-        /* A trigger on a line without a breakpoint: now add the condition. */
+        /* A trigger on a line without a breakpoint: now add the condition.
+         * Only this case says so (recon pass 16). */
         bp_add(&ev->bp);
         dbg.b->ops->bp_condition(dbg.b, ev->bp.id, dbg.pending_cond,
                                  (void *)(intptr_t)REQ_COND);
         update_marks();
+        dbxl_ui_message("Breakpoint set");
         return;
     }
     if (kind == REQ_ADDR) {
         bp_add(&ev->bp);
         update_marks();
         dbxl_ui_message("Breakpoint set");
+        return;
+    }
+    if (kind == REQ_LOAD || kind == REQ_QUIET) {
+        /* Loaded from a file, or Breakpoint all Subprograms: silently. */
+        bp_add(&ev->bp);
+        update_marks();
         return;
     }
     if (kind == REQ_TOGGLE && ev->bp.line != dbg.click_line) {
@@ -389,11 +399,19 @@ static void on_stopped(const dbg_event *ev)
     locals_title(&ev->frame);
     dbxl_data_refresh(ev->frame.file[0] ? ev->frame.func : "", 0);
     dbxl_machine_stopped(ev->frame.addr, ev->reason, ev->signame);
-    if (!dbg.have_symbols) {
-        dbg.have_symbols = true;
-        dbg.b->ops->symbols(dbg.b, NULL);
+    if (!dbg.auto_loaded) {
+        dbg.auto_loaded = true;
+        /* loadBreakpoints (the help, "Saving and Restoring Breakpoints"). */
+        if (dbg.cfg.load_breakpoints)
+            dbxl_debug_load_breakpoints(dbxl_debug_breakpoints_file());
     }
     dbg.b->ops->frames(dbg.b, MAX_CALLERS);
+    /* After the frames, so Callers isn't kept waiting. */
+    if (!dbg.have_symbols) {
+        dbg.have_symbols = true;
+        dbg.b->ops->symbols(dbg.b, dbxl_opt.subprograms_all, NULL);
+        dbg.b->ops->types(dbg.b, NULL);
+    }
     switch (ev->reason) {
     case DBG_STOP_BREAKPOINT: {
         const struct bp *bp = bp_by_id(ev->bkptno);
@@ -451,6 +469,7 @@ static void on_error(const dbg_event *ev)
     case DBG_REQ_DATA_START:
     case DBG_REQ_MEMORY:
     case DBG_REQ_THREADS:
+    case DBG_REQ_TYPES:
     case DBG_REQ_BP_ENABLE:
         break;
     case DBG_REQ_BP_ADDR:
@@ -546,6 +565,9 @@ static void on_event(const dbg_event *ev, void *arg)
         break;
     case DBG_EV_SYMBOLS:
         dbxl_browse_event(ev);
+        break;
+    case DBG_EV_TYPES:
+        dbxl_data_types(ev->names, ev->nnames);
         break;
     case DBG_EV_BP_SET:
         on_bp_set(ev);
@@ -898,7 +920,8 @@ static void trim(char *s)
  * (recon pass 14).
  */
 void dbxl_debug_break_trigger(const char *label, const char *expr,
-                              const char *trigger, bool is_signed)
+                              const char *shown, const char *trigger,
+                              bool is_signed)
 {
     char t[256], lhs[700], *dots;
     bool neg = false;
@@ -908,6 +931,17 @@ void dbxl_debug_break_trigger(const char *label, const char *expr,
         return;
     /* Like any breakpoint change, this drops the Callers highlight. */
     xtk_pane_set_selected(pane(DBXL_W_CALLERS), -1);
+    /* xldb then scrolls Source so the line sits 5 rows above the bottom,
+     * not past the end of the file (recon pass 16). */
+    {
+        xtk_pane *p = pane(DBXL_W_SOURCE);
+        int top = dbg.frame.line - 1 - (xtk_pane_rows(p) - 5);
+        int last = xtk_pane_nlines(p) - xtk_pane_rows(p);
+
+        if (top > last)
+            top = last;
+        xtk_pane_set_top(p, top > 0 ? top : 0);
+    }
     snprintf(t, sizeof t, "%s", trigger);
     trim(t);
     if (t[0] == '!') {
@@ -933,8 +967,9 @@ void dbxl_debug_break_trigger(const char *label, const char *expr,
         snprintf(dbg.pending_cond, sizeof dbg.pending_cond, "%s %s (%s)", lhs,
                  neg ? "!=" : "==", t);
     }
+    /* The entry shows the trigger as typed. */
     snprintf(dbg.pending_label, sizeof dbg.pending_label, "%s: %s", label,
-             trigger);
+             shown);
 
     for (int i = 0; i < dbg.nbps; i++)
         if (dbg.bps[i].line == dbg.frame.line &&
@@ -947,4 +982,132 @@ void dbxl_debug_break_trigger(const char *label, const char *expr,
         dbg.b->ops->bp_line(dbg.b, dbg.frame.fullname[0] ? dbg.frame.fullname
                                                          : dbg.frame.file,
                             dbg.frame.line, (void *)(intptr_t)REQ_COND_NEW);
+}
+
+/* ---- saving and loading breakpoints (recon pass 15) ---------------------- */
+
+const char *dbxl_debug_breakpoints_file(void)
+{
+    if (!dbg.bp_file[0]) {
+        const char *prog = dbg.cfg.program ? base_name(dbg.cfg.program) : "";
+        if (dbg.cfg.breakpoints_file && dbg.cfg.breakpoints_file[0])
+            snprintf(dbg.bp_file, sizeof dbg.bp_file, "%s",
+                     dbg.cfg.breakpoints_file);
+        else
+            snprintf(dbg.bp_file, sizeof dbg.bp_file, ".dbxl.%s", prog);
+    }
+    return dbg.bp_file;
+}
+
+/* A source line's text, for the breakpoints file ("" if unknown). */
+static const char *source_text(const struct bp *bp)
+{
+    char path[1024];
+    const dbxl_source *src;
+
+    if (dbxl_source_find(bp->file, bp->fullname, dbxl_opt.source_path,
+                         dbg.cfg.program, path, sizeof path) != 0)
+        return "";
+    src = dbxl_source_load(path);
+    return src && bp->line >= 1 && bp->line <= src->nlines
+           ? src->lines[bp->line - 1] : "";
+}
+
+/* One line per breakpoint: `break <file> <file> <line> <source line>`. */
+void dbxl_debug_save_breakpoints(const char *file)
+{
+    FILE *f = fopen(file, "w");
+    char msg[1100];
+
+    snprintf(dbg.bp_file, sizeof dbg.bp_file, "%s", file);
+    if (!f) {
+        snprintf(msg, sizeof msg, "Unable to open %s", file);
+        dbxl_ui_message(msg);
+        return;
+    }
+    for (int i = 0; i < dbg.nbps; i++) {
+        const struct bp *bp = &dbg.bps[i];
+        if (!bp->file[0] || bp->line < 1)
+            continue;
+        fprintf(f, "break %s %s %d %s\n", bp->file, bp->file, bp->line,
+                source_text(bp));
+    }
+    fclose(f);
+}
+
+/* Adds the file's breakpoints, skipping ones already set. */
+void dbxl_debug_load_breakpoints(const char *file)
+{
+    FILE *f;
+    char line[2048], msg[1100];
+
+    snprintf(dbg.bp_file, sizeof dbg.bp_file, "%s", file);
+    if (!dbg.b)
+        return;
+    f = fopen(file, "r");
+    if (!f) {
+        snprintf(msg, sizeof msg, "Unable to open %s", file);
+        dbxl_ui_message(msg);
+        return;
+    }
+    while (fgets(line, sizeof line, f)) {
+        char src[1024], obj[1024];
+        int n;
+        bool have = false;
+
+        if (sscanf(line, "break %1023s %1023s %d", src, obj, &n) != 3 || n < 1)
+            continue;
+        for (int i = 0; i < dbg.nbps; i++)
+            if (dbg.bps[i].line == n && same_file(&dbg.bps[i], src, NULL))
+                have = true;
+        if (!have)
+            dbg.b->ops->bp_line(dbg.b, src, n, (void *)(intptr_t)REQ_LOAD);
+    }
+    fclose(f);
+}
+
+/* Breakpoint all Subprograms: every function with debug information, in
+ * address order, silently (recon pass 15). */
+static int by_addr(const void *a, const void *b)
+{
+    const dbg_symbol *x = a, *y = b;
+
+    return x->addr < y->addr ? -1 : x->addr > y->addr;
+}
+
+void dbxl_debug_break_all(void)
+{
+    const dbg_symbol *listed;
+    int n = dbxl_browse_functions(&listed);
+    dbg_symbol *funcs;
+
+    if (!dbg.b || n <= 0)
+        return;
+    funcs = malloc((size_t)n * sizeof *funcs);
+    memcpy(funcs, listed, (size_t)n * sizeof *funcs);
+    qsort(funcs, (size_t)n, sizeof *funcs, by_addr);
+    for (int i = 0; i < n; i++) {
+        bool have = false;
+
+        if (!funcs[i].file[0])
+            continue;
+        for (int k = 0; k < dbg.nbps; k++)
+            if (dbg.bps[k].addr == funcs[i].addr ||
+                (dbg.bps[k].line == funcs[i].line &&
+                 same_file(&dbg.bps[k], funcs[i].file, funcs[i].fullname)))
+                have = true;
+        if (!have)
+            dbg.b->ops->bp_func(dbg.b, funcs[i].name, (void *)(intptr_t)REQ_QUIET);
+    }
+    free(funcs);
+}
+
+void dbxl_debug_options_changed(int item)
+{
+    if (!dbg.b)
+        return;
+    if (item == OPT_SUBPROGRAMS)
+        dbg.b->ops->symbols(dbg.b, dbxl_opt.subprograms_all, NULL);
+    else if (item == OPT_LOCAL_VARIABLES && dbg.state == ST_STOPPED)
+        dbxl_data_refresh(dbg.frame.file[0] ? dbg.frame.func : "", 0);
 }

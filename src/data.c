@@ -15,6 +15,8 @@
 #include <string.h>
 
 #include "core/layout.h"
+#include "core/input.h"
+#include "core/options.h"
 #include "core/value.h"
 #include "data.h"
 #include "debugger.h"
@@ -106,11 +108,6 @@ static const struct item *const kind_items[MK_N] = {
     register_items
 };
 
-#define MENU_X 336
-#define MENU_Y 141
-#define MENU_W 201
-#define MENU_H 460
-
 static struct {
     dbg_backend *b;
     dbg_values *locals, *globals;
@@ -131,12 +128,21 @@ static struct {
     char menu_expr[1100];
     char menu_text[256];             /* the value as displayed */
     char menu_label[1100];            /* the object, for trigger entries */
+    enum dbxl_style menu_style;      /* its style when the menu opened */
+    xtk_rect menu_geom;              /* the menu's place, for the dialogs */
     uint64_t menu_addr;              /* for Storage view */
     bool menu_has_addr;
     bool menu_signed;                /* the style compares signed */
     int ax, ay;                      /* the click that opened it */
     char last_chosen[32];            /* the item chosen last, any menu */
     char kind_last[MK_N][32];        /* ... per kind of menu */
+    enum dbxl_style saved_style;     /* "save": one for all objects */
+    char **types;                    /* for Cast */
+    int ntypes;
+    bool cast_menu;                  /* the menu lists types (Cast) */
+    char subrange_text[64];          /* the prompt's initial text */
+    long arr_lo, arr_hi;             /* the clicked array's bounds */
+    bool have_saved;
 } dd;
 
 /* ---- rendering ---------------------------------------------------------- */
@@ -263,16 +269,68 @@ static void render_all(void)
 
 /* ---- fetching ------------------------------------------------------------ */
 
+/* Subranges and casts travel with the pointer paths ("range:", "cast:"). */
+struct special {
+    char **list;
+    int n;
+};
+
+static void collect_special(const char *key, dbxl_vstate *st, void *arg)
+{
+    struct special *sp = arg;
+    const char *path = strchr(key, ':');
+    char buf[800];
+
+    path = path ? strchr(path + 1, ':') : NULL;
+    if (!path || sp->n >= 250)
+        return;
+    path++;
+    if (st->has_range) {
+        snprintf(buf, sizeof buf, "range:%s:%ld:%ld", path, st->lo, st->hi);
+        sp->list[sp->n++] = strdup(buf);
+    }
+    if (st->cast[0] && sp->n < 250) {
+        snprintf(buf, sizeof buf, "cast:%s:%s", path, st->cast);
+        sp->list[sp->n++] = strdup(buf);
+    }
+}
+
 static void request(enum dbg_scope scope)
 {
+    char prefix[300];
+    char **all = scope == DBG_SCOPE_LOCALS ? dd.deref_l : dd.deref_g;
+    int nall = scope == DBG_SCOPE_LOCALS ? dd.nderef_l : dd.nderef_g;
+    struct special sp;
+
     if (!dd.b)
         return;
+    sp.list = calloc((size_t)nall + 256, sizeof *sp.list);
+    for (int i = 0; i < nall; i++)
+        sp.list[i] = strdup(all[i]);
+    sp.n = nall;
     if (scope == DBG_SCOPE_LOCALS)
-        dd.b->ops->values(dd.b, scope, dd.level,
-                          (const char *const *)dd.deref_l, dd.nderef_l, NULL);
+        snprintf(prefix, sizeof prefix, "L:%s:", dd.func);
     else
-        dd.b->ops->values(dd.b, scope, 0,
-                          (const char *const *)dd.deref_g, dd.nderef_g, NULL);
+        snprintf(prefix, sizeof prefix, "G:");
+    dbxl_vstate_foreach(prefix, collect_special, &sp);
+    dd.b->ops->values(dd.b, scope, scope == DBG_SCOPE_LOCALS ? dd.level : 0,
+                      (const char *const *)sp.list, sp.n,
+                      scope == DBG_SCOPE_LOCALS && dbxl_opt.local_all
+                          ? DBG_VALUES_ALL_BLOCKS : 0, NULL);
+    for (int i = 0; i < sp.n; i++)
+        free(sp.list[i]);
+    free(sp.list);
+}
+
+void dbxl_data_types(const char *const *names, int n)
+{
+    for (int i = 0; i < dd.ntypes; i++)
+        free(dd.types[i]);
+    free(dd.types);
+    dd.types = calloc((size_t)n + 1, sizeof *dd.types);
+    for (int i = 0; i < n; i++)
+        dd.types[i] = strdup(names[i]);
+    dd.ntypes = n;
 }
 
 void dbxl_data_set_backend(dbg_backend *b)
@@ -418,6 +476,14 @@ static void open_menu(const dbxl_span *s, int ax, int ay)
     snprintf(dd.menu_expr, sizeof dd.menu_expr, "%s", s->v->expr ? s->v->expr : "");
     dbxl_format_value(s->v, s->key, dd.ptrsize, dd.menu_text, sizeof dd.menu_text);
     dd.menu_v.kind = s->v->kind;
+    dd.menu_v.size = s->v->size;
+    dd.cast_menu = false;
+    dd.arr_lo = s->v->lo;
+    dd.arr_hi = s->v->lo + (s->v->nchildren > 0 ? s->v->nchildren - 1 : 0);
+    {
+        dbxl_vstate *vs = dbxl_vstate_get(s->key, false);
+        dd.menu_style = vs ? vs->style : STYLE_DEFAULT;
+    }
     {
         dbxl_vstate *st = dbxl_vstate_get(s->key, false);
         enum dbxl_style style = st && st->style ? st->style
@@ -465,20 +531,103 @@ static void root_key(const char *key, char *buf, size_t size)
     snprintf(buf, size, "%.*s", (int)n, key);
 }
 
+static void edit_done(int button, const char *text, void *arg);
+static void trigger_done(int button, const char *text, void *arg);
+static void subrange_done(int button, const char *text, void *arg);
+static void open_cast_menu(void);
+
+/*
+ * xldb reads typed values in the object's display style.  A bad one shows
+ * the style's hint and asks again with the text kept (recon pass 15).
+ */
+static void ask_again(const char *prompt, const char *text, const char *msg,
+                      xtk_dialog_fn fn)
+{
+    dbxl_ui_message(msg);
+    xtk_dialog_prompt_at(prompt, text, "proceed", "cancel", dd.menu_geom.x,
+                         dd.menu_geom.y, dd.ax, dd.ay, fn, NULL);
+}
+
 static void edit_done(int button, const char *text, void *arg)
 {
+    dbxl_input in;
+    char msg[256], expr[1300];
+
     (void)arg;
     if (button != 0 || !dd.b || !dd.menu_expr[0])
         return;
-    dd.b->ops->assign(dd.b, dd.menu_expr, text, NULL);
+    if (dbxl_parse_input(&dd.menu_v, dd.menu_style, text, &in, msg,
+                         sizeof msg) < 0) {
+        ask_again("Enter new value:", text, msg, edit_done);
+        return;
+    }
+    if (in.bits)                     /* a float's bits, typed in hex */
+        snprintf(expr, sizeof expr, "*(%s *)&(%s)",
+                 dd.menu_v.size > 4 ? "unsigned long long" : "unsigned int",
+                 dd.menu_expr);
+    else
+        snprintf(expr, sizeof expr, "%s", dd.menu_expr);
+    dd.b->ops->assign(dd.b, expr, in.literal, NULL);
+}
+
+/* One trigger value in the object's style, into buf ("" and -1 if bad). */
+static int trigger_value(const char *text, char *buf, size_t size, char *msg,
+                         size_t msgsize)
+{
+    dbxl_input in;
+
+    if (dbxl_parse_input(&dd.menu_v, dd.menu_style, text, &in, msg, msgsize) < 0)
+        return -1;
+    snprintf(buf, size, "%s", in.literal);
+    return 0;
 }
 
 static void trigger_done(int button, const char *text, void *arg)
 {
+    char t[256], lo[300], hi[300], cond[700], msg[256];
+    const char *p = text, *dots;
+    bool neg = false;
+
     (void)arg;
-    if (button == 0 && dd.menu_expr[0])
-        dbxl_debug_break_trigger(dd.menu_label, dd.menu_expr, text,
-                                 dd.menu_signed);
+    if (button != 0 || !dd.menu_expr[0])
+        return;
+    while (*p == ' ')
+        p++;
+    if (*p == '!') {
+        neg = true;
+        p++;
+    }
+    snprintf(t, sizeof t, "%s", p);
+    dots = strstr(t, "..");
+    if (dots) {
+        char left[256];
+
+        snprintf(left, sizeof left, "%.*s", (int)(dots - t), t);
+        if (trigger_value(left, lo, sizeof lo, msg, sizeof msg) < 0 ||
+            trigger_value(dots + 2, hi, sizeof hi, msg, sizeof msg) < 0) {
+            ask_again("Enter breakpoint trigger:", text, msg, trigger_done);
+            return;
+        }
+        snprintf(cond, sizeof cond, "%s%s..%s", neg ? "!" : "", lo, hi);
+    } else {
+        if (trigger_value(t, lo, sizeof lo, msg, sizeof msg) < 0) {
+            ask_again("Enter breakpoint trigger:", text, msg, trigger_done);
+            return;
+        }
+        snprintf(cond, sizeof cond, "%s%s", neg ? "!" : "", lo);
+    }
+    dbxl_debug_break_trigger(dd.menu_label, dd.menu_expr, text, cond,
+                             dd.menu_signed);
+}
+
+/* The first more (or flatten) on an object goes to detail 2 whatever the
+ * Detail per click; later ones add the step (recon pass 16). */
+static int more_detail(dbxl_vstate *st, int step, int max)
+{
+    int d = st->stepped ? st->detail + step : 2;
+
+    st->stepped = true;
+    return d < max ? d : max;
 }
 
 static void choose(int row)
@@ -488,7 +637,7 @@ static void choose(int row)
     dbxl_vstate *st;
     char key[600];
     xtk_rect g;
-    int max;
+    int max, step;
 
     for (int i = 0; i <= row; i++)
         if (!items[i].text)
@@ -499,39 +648,79 @@ static void choose(int row)
     snprintf(dd.last_chosen, sizeof dd.last_chosen, "%s", item_name(it));
     snprintf(dd.kind_last[dd.mk], sizeof dd.kind_last[dd.mk], "%s", item_name(it));
     st = dbxl_vstate_get(dd.menu_key, true);
-    max = dd.mk == MK_POINTER ? 4 : 3;
+    /* Levels beyond a value's own depth carry on into its components
+     * (relative levels, recon pass 13), so the cap is generous. */
+    max = 20;
+    step = dbxl_opt.detail_per_click > 0 ? dbxl_opt.detail_per_click : 1;
     g = xtk_pane_geometry(dd.menu);
+    dd.menu_geom = g;
     /* The dialogs warp the pointer themselves (and back when they close). */
-    close_menu(it->act != A_EDIT && it->act != A_BREAKPOINT);
+    close_menu(it->act != A_EDIT && it->act != A_BREAKPOINT &&
+               it->act != A_SUBRANGE && it->act != A_CAST);
 
     switch (it->act) {
     case A_MORE:
         if (dd.mk == MK_POINTER)
             st->style = STYLE_DEFAULT;  /* back to the pointer view */
         st->flat = false;
-        st->detail = st->detail < max ? st->detail + 1 : max;
+        st->detail = more_detail(st, step, max);
         break;
     case A_LESS:
         if (dd.mk == MK_POINTER)
             st->style = STYLE_DEFAULT;
         st->flat = false;
-        st->detail = st->detail <= 1 ? 1 : st->detail - 1;
+        st->detail = st->detail - step < 1 ? 1 : st->detail - step;
+        st->stepped = true;
         break;
     case A_FLATTEN:
         /* Like more, but horizontal (xldb's help). */
         st->flat = true;
-        st->detail = st->detail < max ? st->detail + 1 : max;
+        st->detail = more_detail(st, step, max);
         break;
     case A_STYLE:
         st->style = it->style == dbxl_default_style(dd.menu_v.kind)
                         ? STYLE_DEFAULT : it->style;
         break;
     case A_SAVE:
-        st->saved = st->style;
-        break;
+        /* One saved style for all objects (recon pass 15). */
+        dd.saved_style = st->style;
+        dd.have_saved = true;
+        dbxl_ui_message("Use \"recall\" to apply the saved style to an object.");
+        return;
     case A_RECALL:
-        st->style = st->saved;
+        if (!dd.have_saved) {
+            dbxl_ui_message("Use \"save\" to save a style before using "
+                            "\"recall\".");
+            return;
+        }
+        st->style = dd.saved_style;
         break;
+    case A_SUBRANGE: {
+        dbxl_vstate *vs = dbxl_vstate_get(dd.menu_key, false);
+
+        /* A pointer starts at [0..0]; an array at its current range. */
+        if (vs && vs->has_range)
+            snprintf(dd.subrange_text, sizeof dd.subrange_text, "[%ld..%ld]",
+                     vs->lo, vs->hi);
+        else if (dd.menu_v.kind == DBG_K_ARRAY)
+            snprintf(dd.subrange_text, sizeof dd.subrange_text, "[%ld..%ld]",
+                     dd.arr_lo, dd.arr_hi);
+        else
+            snprintf(dd.subrange_text, sizeof dd.subrange_text, "[0..0]");
+        xtk_dialog_prompt_at("Specify array subrange(s)", dd.subrange_text,
+                             "proceed", "cancel", g.x, g.y, dd.ax, dd.ay,
+                             subrange_done, NULL);
+        xtk_dialog_set_cursor(0);
+        return;
+    }
+    case A_CAST:
+        open_cast_menu();
+        return;
+    case A_FUNCPARAM:
+        /* The address goes to the next commandList sub() call (M6). */
+        dbxl_ui_message("Address of selected object will be argument for "
+                        "next user command invocation");
+        return;
     case A_DEFAULT:
         st->style = STYLE_DEFAULT;
         break;
@@ -565,8 +754,102 @@ static void menu_event(xtk_pane *p, const xtk_pane_event *e, void *arg)
 {
     (void)p;
     (void)arg;
-    if (e->type == XTK_PANE_CLICK && e->button == Button1)
-        choose(e->line);
+    if (e->type != XTK_PANE_CLICK || e->button != Button1)
+        return;
+    if (dd.cast_menu) {
+        /* Cast: the chosen type becomes what the pointer points to. */
+        if (e->line >= 0 && e->line < dd.ntypes) {
+            dbxl_vstate *st = dbxl_vstate_get(dd.menu_key, true);
+            snprintf(st->cast, sizeof st->cast, "%s", dd.types[e->line]);
+            close_menu(true);
+            dd.cast_menu = false;
+            request(dd.menu_key[0] == 'G' ? DBG_SCOPE_GLOBALS : DBG_SCOPE_LOCALS);
+        }
+        return;
+    }
+    choose(e->line);
+}
+
+/* Cast: the Formats window lists the program's types (recon pass 15). */
+static void open_cast_menu(void)
+{
+    xtk_rect g;
+    unsigned char *roles = calloc((size_t)dd.ntypes + 1, 1);
+
+    dd.cast_menu = true;
+    xtk_pane_set_title(dd.menu, "Select new base type");
+    xtk_pane_set_lines(dd.menu, (const char *const *)dd.types, dd.ntypes);
+    xtk_pane_set_line_roles(dd.menu, roles, dd.ntypes);
+    xtk_pane_set_selected(dd.menu, dd.ntypes > 0 ? 0 : -1);
+    xtk_pane_map(dd.menu);
+    dd.menu_open = true;
+    g = xtk_pane_geometry(dd.menu);
+    xtk_warp_frame(g.x + 2 + 4, g.y + 2 + 13 + 6);
+    free(roles);
+}
+
+/*
+ * Select subrange: `[lo..hi]`, `[n]`, `[*]` or `[lo..*]` (an array); a
+ * pointer needs an upper bound.  xldb's hints come from its catalogue.
+ */
+static void subrange_done(int button, const char *text, void *arg)
+{
+    char t[128], *p, *dots;
+    long lo, hi;
+    bool pointer = dd.menu_v.kind == DBG_K_POINTER;
+    dbxl_vstate *st;
+
+    (void)arg;
+    if (button != 0)
+        return;
+    snprintf(t, sizeof t, "%s", text);
+    p = t;
+    while (*p == ' ')
+        p++;
+    if (*p != '[' || !strchr(p, ']')) {
+        ask_again("Specify array subrange(s)", text,
+                  "Specify a range enclosed in brackets [].", subrange_done);
+        return;
+    }
+    p++;
+    *strchr(p, ']') = '\0';
+    dots = strstr(p, "..");
+    if (dots) {
+        *dots = '\0';
+        lo = strcmp(p, "*") == 0 ? dd.arr_lo : strtol(p, NULL, 10);
+        if (strcmp(dots + 2, "*") == 0) {
+            if (pointer) {
+                ask_again("Specify array subrange(s)", text,
+                          "An upper bound must be specified because the "
+                          "range is unbounded", subrange_done);
+                return;
+            }
+            hi = dd.arr_hi;
+        } else {
+            hi = strtol(dots + 2, NULL, 10);
+        }
+    } else if (strcmp(p, "*") == 0 && !pointer) {
+        lo = dd.arr_lo;
+        hi = dd.arr_hi;
+    } else if (*p >= '0' && *p <= '9') {
+        lo = hi = strtol(p, NULL, 10);
+    } else {
+        ask_again("Specify array subrange(s)", text,
+                  "Enter a range or index: specify \"i\", \"i..j\", \"*..j\", "
+                  "\"i..*\", or \"*\".", subrange_done);
+        return;
+    }
+    if (hi < lo || hi - lo > 999) {
+        char msg[128];
+        snprintf(msg, sizeof msg, "The range %ld .. %ld is too large.", lo, hi);
+        ask_again("Specify array subrange(s)", text, msg, subrange_done);
+        return;
+    }
+    st = dbxl_vstate_get(dd.menu_key, true);
+    st->has_range = true;
+    st->lo = lo;
+    st->hi = hi;
+    request(dd.menu_key[0] == 'G' ? DBG_SCOPE_GLOBALS : DBG_SCOPE_LOCALS);
 }
 
 void dbxl_data_open_menu(const dbxl_span *s, int fx, int fy)
@@ -596,12 +879,17 @@ bool dbxl_data_handle_event(const XEvent *ev)
     return false;
 }
 
-void dbxl_data_init(void)
+void dbxl_data_init(xtk_rect formats)
 {
     dd.ptrsize = 8;
-    dd.menu = xtk_pane_create("", (xtk_rect){ MENU_X, MENU_Y, MENU_W, MENU_H },
+    dd.menu = xtk_pane_create("", formats,
                               XTK_SB_NONE);
     xtk_pane_set_handler(dd.menu, menu_event, NULL);
     for (int w = 0; w < DBXL_NWINDOWS; w++)
         dbxl_render_init(&dd.r[w], 8);
+}
+
+xtk_rect dbxl_data_formats_geometry(void)
+{
+    return xtk_pane_geometry(dd.menu);
 }

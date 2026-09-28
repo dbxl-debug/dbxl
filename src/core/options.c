@@ -71,7 +71,9 @@ void dbxl_options_item(int k, char *buf, int size)
     case OPT_REGISTER_CONTROL:
         fmt(buf, size, 30, "Register control", NULL); break;
     case OPT_SUBPROGRAMS:
-        fmt(buf, size, 30, "Subprograms:", o->subprograms_all ? "All" : "With -g  only");
+        /* xldb pads "All" to the width of "With -g  only" (recon 15). */
+        fmt(buf, size, 30, "Subprograms:",
+            o->subprograms_all ? "    All      " : "With -g  only");
         break;
     case OPT_SAVE_BREAKPOINTS:
         fmt(buf, size, 30, "Save Breakpoints", NULL); break;

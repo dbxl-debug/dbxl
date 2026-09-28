@@ -9,5 +9,7 @@
 
 void dbxl_browse_event(const dbg_event *ev);
 void dbxl_browse_click(int window, const xtk_pane_event *e);
+/* The functions listed (with debug information unless Subprograms: All). */
+int dbxl_browse_functions(const dbg_symbol **funcs);
 
 #endif

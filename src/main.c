@@ -9,6 +9,7 @@
 #include "core/options.h"
 #include "core/resources.h"
 #include "debugger.h"
+#include "help.h"
 #include "opts.h"
 #include "ui.h"
 #include "xtk/xtk.h"
@@ -89,6 +90,10 @@ int main(int argc, char **argv)
 
     if (dbxl_opts_parse(&o, argc, argv) < 0)
         return 255;
+    if (o.help) {
+        dbxl_help_print(stdout);
+        return 0;
+    }
     if (!xtk_open(o.display))
         return 1;
     dbxl_res_init(xtk_dpy(), o.name ? o.name : dbxl_res_default_name(argv[0]));
@@ -153,6 +158,9 @@ int main(int argc, char **argv)
     dcfg.edit = o.edit ? o.edit : dbxl_res_str("edit");
     dcfg.include = o.include;
     dcfg.ninclude = o.ninclude;
+    dcfg.breakpoints_file = dbxl_res_str("breakpointsFile");
+    dcfg.load_breakpoints = dbxl_res_bool("loadBreakpoints", false) &&
+                            !o.no_load_breakpoints;
     dbxl_debug_init(&dcfg);
 
     status = xtk_loop_run();

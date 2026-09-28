@@ -15,6 +15,8 @@ struct dbxl_opts {
     int scheme;              /* -1 unset, else enum xtk_scheme (-bw, -wb) */
     int scale;               /* -1 unset, 0 = auto, 1-4 */
     const char *edit;        /* -E: edit command */
+    int no_load_breakpoints; /* -k: don't load saved breakpoints */
+    int help;                /* -h: print the help text and exit */
     const char *include[32]; /* -I: source directories */
     int ninclude;
     const char *program;     /* program to debug */

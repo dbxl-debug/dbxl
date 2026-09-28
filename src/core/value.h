@@ -24,14 +24,22 @@ enum dbxl_style {
 
 typedef struct dbxl_vstate {
     enum dbxl_style style;
-    enum dbxl_style saved;
     int detail;                  /* 1 collapsed, 2 inline, 3 vertical... */
+    bool stepped;                /* more/less/flatten used on it */
     bool flat;                   /* "flatten": horizontal, pointers not followed */
     bool monitored;
+    bool has_range;              /* Select subrange: elements lo..hi */
+    long lo, hi;
+    char cast[128];              /* Cast: the pointed-to type, "" = none */
 } dbxl_vstate;
 
 /* The state for key, created (default) when create is set. */
 dbxl_vstate *dbxl_vstate_get(const char *key, bool create);
+
+/* Call fn for every state whose key starts with prefix. */
+void dbxl_vstate_foreach(const char *prefix,
+                         void (*fn)(const char *key, dbxl_vstate *s, void *arg),
+                         void *arg);
 
 /* A clickable element: columns [col0, col1) of a line. */
 typedef struct dbxl_span {

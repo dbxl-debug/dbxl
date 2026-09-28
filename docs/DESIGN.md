@@ -536,6 +536,11 @@ Locals, Globals and Monitor, so they survive stepping, re-expansion and Restart.
 `recon/xldb-h.txt` is IBM's copyrighted material. We use it to understand structure and
 behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
 
+The Help window opens at the index. Only lines starting with `-->` are links; a link scrolls
+so the heading it names (section number optional, case ignored) is the top row. The title
+`Help [exit][index][return]` has three hotspots; `[return]` walks a history of top rows.
+(`src/help.c`, done in M5b.)
+
 ## 11. Deliberate deviations from xldb
 | xldb | dbxl |
 |---|---|
@@ -567,7 +572,8 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
    | Busy pointer | **done** *[obs p10]*: stopwatch, used while xldb works | M3 |
    | Conditional stop sign (`?` fill bitmap), triggers, Breakpoints actions, Disassembly/Registers/Storage/Files/Subprograms/Threads clicks | **done** *[obs p14]* | M5a |
    | Formats window (= the variable menu), Save layout / breakpoint files, Detail per click, Subprograms All, Breakpoint all Subprograms, Help navigation | **done** *[obs p15]* | M5b |
-   | Source scroll after a trigger: the line goes 4 rows above the bottom | **done** *[obs p15]* | M5b |
+   | Source scroll after a trigger: the line goes 5 rows above the bottom, not past the end | **done** *[obs p16]* | M5b |
+   | First `more` on an object goes to detail 2 whatever Detail per click is | **done** *[obs p16]* | M5b |
    | Signal command, `-q`, core files (`-co`) | open | M6 |
    | Edit input checked against the style (hint message, prompt again) | **done** *[obs p15]* | M5b |
    | Select subrange, Cast (`Select new base type`), Function parameter message; Downcast/Show self are C++ only | **done** *[obs p15]* | M5b |
@@ -611,8 +617,12 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
      `intregister` menu), Storage (word menu, in-place edit, Storage view), Threads, Files,
      Subprograms. Visual test: a 30-step scenario recorded from xldb on `rich` (also at scale
      2), masking what is machine-specific. Recon pass 14.
-   - **5b:** Help (own text), the Formats window, Options side effects (Save layout,
-     Save/Load breakpoints), the remaining variable-menu actions, Edit input checks.
+   - **5b** (done): Help (own text, title-bar `[exit][index][return]`, `-h`), the Formats
+     window, Options side effects (Save layout, Save/Load breakpoints, `-k`, Detail per
+     click, Subprograms All, Breakpoint all Subprograms, Case Sensitive), the remaining
+     variable-menu actions (Select subrange, Cast, Function parameter, save/recall), Edit
+     input checks. Visual test: a 27-step scenario recorded from xldb on `rich` (also at
+     scale 2), masking the Help text. Recon passes 15 and 16.
 6. **Hardening:** core files, attach, signals, deferred breakpoints, `commandList` actions,
    sample layouts. Then evaluate an LLDB backend.
 
