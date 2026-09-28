@@ -475,8 +475,9 @@ Each pane is a `textpane` (list of styled lines + hit-test) plus a click handler
   line into view and raise Source. A selected caller frame's line is drawn as a full-width cyan
   bar. `:n`, `/x`, `\x`, `?x` via the inline LightBlue input strip at the pointer row. The match
   or line becomes the **pointer position** (warp), not a caret.
-- **Disassembly:** titled with the function name, the same glyph and cyan conventions, and
-  Machine step moves only this arrow.
+- **Disassembly:** titled with the function name, the same glyph and cyan conventions. A
+  click sets a breakpoint at that instruction (shown on its source line too). Machine step
+  moves this arrow; the Source arrow follows the pc's source line *[obs p14]*.
 - **Locals/Globals/Monitor:** value trees. Left-click an item (or element) opens the type menu
   (§9).
 - **Callers:** click selects a frame and updates Locals, Source and Disassembly.
@@ -486,9 +487,20 @@ Each pane is a `textpane` (list of styled lines + hit-test) plus a click handler
   Continue c, Next n, Step s, Machine step m, Return r, Signal g, Edit e,
   Restart t, Exit x, Breakpoint b, Options o, Help h, ""=null
   ```
-- **Breakpoints:** click selects (cyan) and scrolls Source/Disassembly to it, then opens the
-  `Select Breakpoint Action` cell menu (Clear/Disable/Enable, and the `all` variants).
-- **Storage:** hex dump. `Storage view` scrolls the target to the top row and messages
+- **Breakpoints:** click selects (cyan) and centres Source on it (cyan bar), then opens the
+  `Select Breakpoint Action` cell menu with its corner at the pane's centre (Clear/Disable/
+  Enable, and the `all` variants; `Clear all` confirms `Clear ALL user breakpoints?`). No
+  messages. Entries `func [line N in file]`, plus `  obj: trigger` or `  Disabled`
+  *[obs p14]*.
+- **Conditional breakpoints:** a value menu's Breakpoint asks `Enter breakpoint trigger:`
+  (compact prompt, prefilled) and makes the breakpoint on the current line conditional
+  (`?` stop sign; `Conditional breakpoint (condition is satisfied).` when it fires).
+- **Files / Subprograms:** a click highlights the entry and shows the file from line 1 or the
+  function at its `{` line, with a cyan bar (and the function's disassembly).
+- **Storage** (`Storage Pane`): hex dump from the data segment. Clicking a word gives the
+  `Storage` cell menu at the word (Edit, Breakpoint, Storage view). Edit is an in-place 64x13
+  field over the word, titled `Change Block at Address: %08X`. `Storage view` scrolls the
+  target to the top row and messages
   `Storage target address is: %x`. When Storage is hidden, the message is
   `Storage view ignored. Storage pane is hidden`.
 - **Registers:** groups and formats per §6.1: Special, General, then Double/Float when on (Options -> Register control
@@ -552,7 +564,8 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
    | Exact bitmaps (pointer, busy cursor, bug icon, glyphs) | **done** *[obs p10]* (§5.4) | M2 |
    | Horizontal scrollbars | **done** *[obs p10]*: mirror the vertical bar; neither bar shortens; vertical is created first | M2 |
    | Busy pointer | **done** *[obs p10]*: stopwatch, used while xldb works | M3 |
-   | Conditional stop sign, Formats window | open | M5 |
+   | Conditional stop sign (`?` fill bitmap), triggers, Breakpoints actions, Disassembly/Registers/Storage/Files/Subprograms/Threads clicks | **done** *[obs p14]* | M5a |
+   | Formats window, Save layout / breakpoint files, Help | open | M5b |
    | Signal command, `-q`, core files (`-co`) | open | M6 |
    | Edit input checked against the style (xldb re-prompts for `-5` on a value shown in hex) | open | M5 |
    | Select subrange, Cast, Downcast, Show self, Function parameter | open | M5 |
