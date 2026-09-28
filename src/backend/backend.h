@@ -113,6 +113,9 @@ struct dbg_backend_ops {
     void (*bp_delete)(dbg_backend *b, int id, void *cookie);
 
     void (*frames)(dbg_backend *b, int max);
+
+    /* The program's process id, 0 when it isn't running. */
+    int (*pid)(dbg_backend *b);
 };
 
 struct dbg_backend {

@@ -6,6 +6,11 @@
  * GDB runs in all-stop, synchronous mode: commands written while the
  * program runs wait in the pipe until it stops, which is what dbxl wants.
  * The program gets dbxl's terminal (or /dev/null), never the MI pipes.
+ * The terminal is attached by redirections for the shell GDB starts the
+ * program with, not by -inferior-tty-set: that makes GDB try to make the
+ * terminal the program's controlling terminal, which fails for a terminal
+ * that already controls dbxl's session, and GDB then prints a warning (as
+ * a raw MI record) on it.
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -43,6 +48,8 @@ struct gdbmi {
     int npending;
     char run_to[256];
     dbg_frame frames[MAX_FRAMES];
+    FILE *log;                     /* $DBXL_MI_LOG: the MI traffic */
+    int inferior_pid;
 };
 
 static void emit(struct gdbmi *g, dbg_event *ev)
@@ -65,6 +72,10 @@ static void sendf(struct gdbmi *g, enum dbg_request req, void *cookie, int id,
     if (n > (int)sizeof cmd - 2)
         n = (int)sizeof cmd - 2;
     cmd[n++] = '\n';
+    if (g->log) {
+        fprintf(g->log, "> %.*s", n, cmd);
+        fflush(g->log);
+    }
     if (g->npending < MAX_PENDING) {
         struct pending *p = &g->pending[g->npending++];
         p->token = token;
@@ -237,6 +248,10 @@ static void on_line(struct gdbmi *g, const char *line)
     mi_record *r = mi_parse(line);
     dbg_event ev;
 
+    if (g->log) {
+        fprintf(g->log, "< %s\n", line);
+        fflush(g->log);
+    }
     if (!r)
         return;
     switch (r->type) {
@@ -251,6 +266,12 @@ static void on_line(struct gdbmi *g, const char *line)
         } else if (strcmp(r->klass, "stopped") == 0) {
             on_stopped(g, r);
         }
+        break;
+    case MI_NOTIFY:
+        if (strcmp(r->klass, "thread-group-started") == 0)
+            g->inferior_pid = (int)mi_int(r->results, "pid", 0);
+        else if (strcmp(r->klass, "thread-group-exited") == 0)
+            g->inferior_pid = 0;
         break;
     default:
         break;
@@ -394,22 +415,27 @@ static int gdbmi_start(dbg_backend *b, const dbg_launch *l)
     sendf(g, DBG_REQ_OTHER, NULL, 0, "-gdb-set confirm off");
     mi_quote(l->program, q, sizeof q);
     sendf(g, DBG_REQ_START, NULL, 0, "-file-exec-and-symbols %s", q);
-    if (l->argc > 0) {
-        char args[8192];
+    {
+        /*
+         * `set args` hands the text to the startup shell as is, where
+         * -exec-arguments (in recent GDB; seen with 17.1) quotes each word, which would
+         * pass the redirections to the program as arguments.
+         */
+        char args[8192], tty[1100], cmd[8400];
         size_t n = 0;
 
-        args[0] = '\0';
-        for (int i = 0; i < l->argc; i++) {
+        n += (size_t)snprintf(args, sizeof args, "set args");
+        for (int i = 0; i < l->argc && n < sizeof args; i++) {
             shell_quote(l->argv[i], arg, sizeof arg);
-            mi_quote(arg, q, sizeof q);
-            n += (size_t)snprintf(args + n, sizeof args - n, " %s", q);
-            if (n >= sizeof args)
-                break;
+            n += (size_t)snprintf(args + n, sizeof args - n, " %s", arg);
         }
-        sendf(g, DBG_REQ_OTHER, NULL, 0, "-exec-arguments%s", args);
+        shell_quote(l->tty ? l->tty : "/dev/null", tty, sizeof tty);
+        if (n < sizeof args)
+            snprintf(args + n, sizeof args - n, " <%s >%s 2>&1", tty, tty);
+        mi_quote(args, cmd, sizeof cmd);
+        sendf(g, DBG_REQ_OTHER, NULL, 0, "-gdb-set startup-with-shell on");
+        sendf(g, DBG_REQ_OTHER, NULL, 0, "-interpreter-exec console %s", cmd);
     }
-    mi_quote(l->tty ? l->tty : "/dev/null", q, sizeof q);
-    sendf(g, DBG_REQ_OTHER, NULL, 0, "-inferior-tty-set %s", q);
     run(g);
     return 0;
 }
@@ -441,6 +467,8 @@ static void gdbmi_shutdown(dbg_backend *b)
         }
         g->pid = 0;
     }
+    if (g->log)
+        fclose(g->log);
     free(g->buf);
     free(g);
 }
@@ -506,6 +534,11 @@ static void gdbmi_frames(dbg_backend *b, int max)
           "-stack-list-frames 0 %d", max > 0 ? max - 1 : MAX_FRAMES - 1);
 }
 
+static int gdbmi_pid(dbg_backend *b)
+{
+    return ((struct gdbmi *)b)->inferior_pid;
+}
+
 static const struct dbg_backend_ops ops = {
     .start = gdbmi_start,
     .shutdown = gdbmi_shutdown,
@@ -521,6 +554,7 @@ static const struct dbg_backend_ops ops = {
     .bp_func = gdbmi_bp_func,
     .bp_delete = gdbmi_bp_delete,
     .frames = gdbmi_frames,
+    .pid = gdbmi_pid,
 };
 
 dbg_backend *dbg_gdbmi_create(dbg_event_fn fn, void *arg)
@@ -531,5 +565,7 @@ dbg_backend *dbg_gdbmi_create(dbg_event_fn fn, void *arg)
     g->base.fn = fn;
     g->base.arg = arg;
     g->to_gdb = g->from_gdb = -1;
+    if (getenv("DBXL_MI_LOG") && *getenv("DBXL_MI_LOG"))
+        g->log = fopen(getenv("DBXL_MI_LOG"), "a");
     return &g->base;
 }

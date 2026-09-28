@@ -8,6 +8,8 @@
  * the current frame highlighted; the Locals title names the function and
  * file.  Messages come from xldb's catalogue (recon/xldb-messages.txt).
  */
+#include <fcntl.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,6 +58,40 @@ static struct {
 } dbg;
 
 static int watched_fd = -1;       /* the backend's descriptor */
+static int tty_fd = -1;           /* dbxl's terminal, when it is in front */
+
+/*
+ * The program shares dbxl's terminal.  GDB starts it in its own process
+ * group, so like a shell dbxl makes that group the terminal's foreground
+ * while the program runs (so it can read, and Ctrl-C interrupts it) and
+ * takes the terminal back when it stops.
+ */
+static void set_foreground(pid_t pgrp)
+{
+    sigset_t block, old;
+
+    if (tty_fd < 0 || pgrp <= 0)
+        return;
+    /* A background process group gets SIGTTOU from tcsetpgrp. */
+    sigemptyset(&block);
+    sigaddset(&block, SIGTTOU);
+    sigprocmask(SIG_BLOCK, &block, &old);
+    tcsetpgrp(tty_fd, pgrp);
+    sigprocmask(SIG_SETMASK, &old, NULL);
+}
+
+static void give_terminal(void)
+{
+    int pid = dbg.b ? dbg.b->ops->pid(dbg.b) : 0;
+
+    if (pid > 0)
+        set_foreground(getpgid(pid));
+}
+
+static void take_terminal(void)
+{
+    set_foreground(getpgrp());
+}
 
 static xtk_pane *pane(int w) { return dbxl_ui_pane(w); }
 
@@ -321,6 +357,9 @@ static void on_event(const dbg_event *ev, void *arg)
     char sig[128], msg[256];
 
     (void)arg;
+    if (ev->type == DBG_EV_STOPPED || ev->type == DBG_EV_EXITED ||
+        ev->type == DBG_EV_SIGNALLED || ev->type == DBG_EV_DIED)
+        take_terminal();
     switch (ev->type) {
     case DBG_EV_RUNNING:
         if (dbg.state != ST_STARTING)
@@ -398,6 +437,14 @@ void dbxl_debug_init(const struct dbxl_debug_config *cfg)
     for (int fd = 0; fd <= 2 && !tty; fd++)
         if (isatty(fd))
             tty = ttyname(fd);
+    /* Hand the terminal over only when dbxl has it (not started with &). */
+    if (tty) {
+        tty_fd = open(tty, O_RDWR | O_NOCTTY | O_CLOEXEC);
+        if (tty_fd >= 0 && tcgetpgrp(tty_fd) != getpgrp()) {
+            close(tty_fd);
+            tty_fd = -1;
+        }
+    }
 
     memset(&l, 0, sizeof l);
     l.program = cfg->program;
@@ -421,6 +468,7 @@ void dbxl_debug_shutdown(void)
     if (!dbg.b)
         return;
     dbg.shutting_down = true;
+    take_terminal();
     if (watched_fd >= 0)
         xtk_loop_remove_fd(watched_fd);
     dbg_shutdown(dbg.b);
@@ -479,13 +527,14 @@ void dbxl_debug_command(enum dbxl_action action)
     }
     if (dbg.state != ST_STOPPED && dbg.state != ST_EXITED)
         return;
+    give_terminal();
     switch (action) {
     case ACT_CONTINUE:     ops->cont(dbg.b); break;
     case ACT_NEXT:         ops->next(dbg.b); break;
     case ACT_STEP:         ops->step(dbg.b); break;
     case ACT_MACHINE_STEP: ops->step_insn(dbg.b); break;
     case ACT_RETURN:       ops->finish(dbg.b); break;
-    default:               return;
+    default:               take_terminal(); return;
     }
     if (dbg.state == ST_STOPPED)
         set_state(ST_RUNNING);

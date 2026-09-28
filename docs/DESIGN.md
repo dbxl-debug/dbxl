@@ -414,7 +414,13 @@ Events (`dbg_event`): `STOPPED{reason, signal, bp id, frame}`, `RUNNING`, `EXITE
 readable, cont, next, step, step_insn, finish, restart, bp_line, bp_func, bp_delete and
 frames, with events RUNNING, STOPPED, EXITED, SIGNALLED, FRAMES, BP_SET, BP_DELETED, ERROR
 and DIED. The rest arrives with the panes that need it. `DBXL_GDB` overrides the gdb binary.
-The program runs on dbxl's terminal (or `/dev/null` without one), never on the MI pipes.
+The program runs on dbxl's terminal (or `/dev/null` without one), never on the MI pipes. The
+terminal is attached with redirections for GDB's startup shell (console `set args ... <tty >tty
+2>&1`; GDB 17 `-exec-arguments` quotes each word), not `-inferior-tty-set`, which warns
+when the terminal already controls dbxl's session. GDB puts the program in its own process
+group, so, like a shell, dbxl makes that group the terminal's foreground while the program runs
+(it can read input; Ctrl-C stops it with SIGINT) and takes it back on every stop.
+`DBXL_MI_LOG=file` logs the MI traffic.
 
 **Values** are backend-neutral trees: `{id, name, kind, type_name, size, scalar(bytes or
 text), has_children}`. `kind` is `INT_SIGNED | INT_UNSIGNED | CHAR | FLOAT | ENUM | POINTER |
@@ -425,7 +431,7 @@ from backend-formatted strings, so both backends produce identical text.
 
 | dbxl | GDB/MI |
 |---|---|
-| launch | `gdb --interpreter=mi3 -nx -q`, `-file-exec-and-symbols`, `-exec-arguments`, `-gdb-set mi-async on` |
+| launch | `gdb --interpreter=mi3 -nx -q`, `-file-exec-and-symbols`, console `set args` (with the terminal redirections) |
 | run to `main` | `-break-insert -t main` + `-exec-run` |
 | core (`-co`) / attach (`-a`) | `-target-select core` / `-target-attach` |
 | Continue / Signal | `-exec-continue` / `-interpreter-exec console "signal N"` |
