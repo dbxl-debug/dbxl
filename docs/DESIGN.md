@@ -554,6 +554,8 @@ so the heading it names (section number optional, case ignored) is the top row. 
 | POWER registers/disassembly | host architecture (x86-64 first) |
 | Storage keeps `Change Block at Address: ...` as its title after Escape | restores `Storage Pane` |
 | cannot debug dynamically linked programs on AIX 4.3 | not applicable |
+| Restart after the program died of a signal leaves no process (`Function source is not available...`) *[obs p17]* | restarts normally |
+| Globals opened after termination briefly shows 0xff garbage (`ratio: -NaNQ`) *[obs p17]* | shows it empty |
 
 ## 12. Open questions
 1. ~~Mono-scheme glyphs~~ **Decided** (2026-09-27): derive them from the scheme colours, see §11.
@@ -574,7 +576,9 @@ so the heading it names (section number optional, case ignored) is the top row. 
    | Formats window (= the variable menu), Save layout / breakpoint files, Detail per click, Subprograms All, Breakpoint all Subprograms, Help navigation | **done** *[obs p15]* | M5b |
    | Source scroll after a trigger: the line goes 5 rows above the bottom, not past the end | **done** *[obs p16]* | M5b |
    | First `more` on an object goes to detail 2 whatever Detail per click is | **done** *[obs p16]* | M5b |
-   | Signal command, `-q`, core files (`-co`) | open | M6 |
+   | Signal command, termination state, `-q`, `-r`, `-c`, `-e`, `-i`, justification/style/limit resources, user-command prompt | **done** *[obs p17]* | M6 |
+   | Core files (`-co`): the guest writes light cores that xldb can't read; needs root (`fullcore`) | blocked | M6 |
+   | Attach (`-a`), fork/multiprocess, normal exit: fail on the emulator | not observable | M6 (from the help) |
    | Edit input checked against the style (hint message, prompt again) | **done** *[obs p15]* | M5b |
    | Select subrange, Cast (`Select new base type`), Function parameter message; Downcast/Show self are C++ only | **done** *[obs p15]* | M5b |
 
@@ -623,8 +627,29 @@ so the heading it names (section number optional, case ignored) is the top row. 
      variable-menu actions (Select subrange, Cast, Function parameter, save/recall), Edit
      input checks. Visual test: a 27-step scenario recorded from xldb on `rich` (also at
      scale 2), masking the Help text. Recon passes 15 and 16.
-6. **Hardening:** core files, attach, signals, deferred breakpoints, `commandList` actions,
-   sample layouts. Then evaluate an LLDB backend.
+6. **Hardening** (recon pass 17):
+   - **Signals:** Signal passes the stop signal (GDB `signal SIG`); Continue/Next/Step/Return
+     discard it (`signal 0` first); `-i`/`ignoreSignals` (GDB `handle SIG nostop noprint
+     pass`).
+   - **Termination state:** `"<prog>" terminated. Termination code is: -1.` for a signal
+     death; everything cleared (blank Locals/Source titles, empty panes); run commands say
+     `Can't continue unless at least one thread with a pending signal is Enabled`; Breakpoint
+     and Source clicks set nothing; Restart works (xldb's doesn't).
+   - **Options:** `-q` (map the window at the first signal stop), `-r`/`runTo`, `-c`/
+     `maxCalls` (`[...]` row), `-e`/`maxArrayElements` (`...`), `-i`, `-n`, `-v`, `-F`/
+     `fetchSource`.
+   - **Resources:** scalarJustification, maxString, signed/unsigned/float/complexStyles,
+     floatDigits, automaticBreakpoints, menuInfoForeground, cursorForeground, localVariables,
+     detailPerClick, caseSensitive, sourceSearchPath, the register-group resources.
+   - **User commands:** `Name=func()` opens `Enter function parameter (in hex)` prefilled
+     with the Function parameter address, then calls `func(addr)` (GDB `call`); null rows
+     beep.
+   - **Core files and attach** (`-co`, `-a`): from the help plus GDB (`core-file`,
+     `attach`); Commands in core mode shows only Edit, Exit, Options, Help, and storage
+     changes are refused with xldb's catalogue messages. Detach on Exit after `-a`.
+   - Fork handling (Multiprocess debugging, Fork path) via GDB `follow-fork-mode` /
+     `detach-on-fork`, from the help.
+   - Then evaluate an LLDB backend (separately).
 
 **Later enhancements (not scheduled):**
 - **32-bit targets** (i386 via `gcc -m32` first). The design already requires pointer-size
