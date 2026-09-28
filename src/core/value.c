@@ -66,6 +66,7 @@ enum dbxl_style dbxl_default_style(enum dbg_kind kind)
     case DBG_K_CHAR: return STYLE_CHARACTER;
     case DBG_K_FLOAT: return STYLE_SCIENTIFIC;
     case DBG_K_POINTER: return STYLE_POINTER;
+    case DBG_K_REGISTER: return STYLE_HEX;
     default: return STYLE_DEFAULT;
     }
 }
@@ -220,7 +221,7 @@ void dbxl_format_value(const dbg_value *v, const char *key, int ptrsize,
 
     switch (v->kind) {
     case DBG_K_INT: case DBG_K_UINT: case DBG_K_CHAR: case DBG_K_UCHAR:
-    case DBG_K_BOOL: case DBG_K_ENUM: {
+    case DBG_K_BOOL: case DBG_K_ENUM: case DBG_K_REGISTER: {
         int64_t sv;
 
         if (v->kind == DBG_K_ENUM && st == STYLE_DEFAULT) {
@@ -480,14 +481,22 @@ void dbxl_render_text(dbxl_render *r, const char *text)
 
 void dbxl_render_var(dbxl_render *r, const char *scope, const dbg_value *v)
 {
+    char label[300];
+
+    snprintf(label, sizeof label, "%s: ", v->name);
+    dbxl_render_var_label(r, scope, label, v);
+}
+
+void dbxl_render_var_label(dbxl_render *r, const char *scope,
+                           const char *label, const dbg_value *v)
+{
     char key[600];
     int d;
 
     make_key(key, sizeof key, scope, v->name);
     d = own_detail(key);
     new_line(r, 0);
-    put(r, v->name);
-    put(r, ": ");
+    put(r, label);
     /* The name belongs to the variable too. */
     {
         int line = r->nlines - 1;

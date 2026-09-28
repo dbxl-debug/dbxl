@@ -134,6 +134,7 @@ static void paint_ring(Drawable d, const char *const *outer,
  *   arrow:      ring #000001, interior black        at (2, line_top)
  *   stop sign:  ring #000001, interior #fa1340      at (2, line_top + 1)
  *   disabled:   ring #000001, interior = background
+ *   conditional: the stop sign with a `?` left in the ring colour
  * In the mono schemes the colours come from the scheme (DESIGN.md 11):
  * filled glyphs use the foreground with a background ring; the disabled
  * stop sign is a foreground ring.
@@ -153,6 +154,12 @@ void xtk_glyph_draw(Drawable d, enum xtk_glyph g, int line_top)
         paint_ring(d, stop_outer, stop_inner, 11, 11, 0, 0, 2, line_top + 1,
                    mono ? XTK_BG : XTK_GLYPH_OUTLINE);
         paint(d, stop_inner, 11, 11, 2, line_top + 1,
+              mono ? XTK_FG : XTK_STOP);
+        break;
+    case XTK_GLYPH_STOP_COND:
+        paint_ring(d, stop_outer, stop_cond_inner, 11, 11, 0, 0, 2, line_top + 1,
+                   mono ? XTK_BG : XTK_GLYPH_OUTLINE);
+        paint(d, stop_cond_inner, 11, 11, 2, line_top + 1,
               mono ? XTK_FG : XTK_STOP);
         break;
     case XTK_GLYPH_STOP_DISABLED:

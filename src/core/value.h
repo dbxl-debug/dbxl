@@ -55,6 +55,9 @@ void dbxl_render_free(dbxl_render *r);
 void dbxl_render_text(dbxl_render *r, const char *text);
 /* "name: value" lines for a variable in scope ("L:main", "G:rich.c"). */
 void dbxl_render_var(dbxl_render *r, const char *scope, const dbg_value *v);
+/* The same with its own label ("RAX  : " for registers). */
+void dbxl_render_var_label(dbxl_render *r, const char *scope,
+                           const char *label, const dbg_value *v);
 /* The innermost span at (line, col), or NULL. */
 const dbxl_span *dbxl_render_hit(const dbxl_render *r, int line, int col);
 

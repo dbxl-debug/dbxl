@@ -40,7 +40,8 @@ typedef struct dbg_frame {
 enum dbg_kind {
     DBG_K_INT, DBG_K_UINT, DBG_K_CHAR, DBG_K_UCHAR, DBG_K_BOOL, DBG_K_FLOAT,
     DBG_K_ENUM, DBG_K_POINTER, DBG_K_ARRAY, DBG_K_STRUCT, DBG_K_UNION,
-    DBG_K_FUNC, DBG_K_OTHER, DBG_K_ERROR
+    DBG_K_FUNC, DBG_K_OTHER, DBG_K_ERROR,
+    DBG_K_REGISTER                 /* an integer register (dbxl's own) */
 };
 
 typedef struct dbg_value {
@@ -85,11 +86,42 @@ void dbg_values_free(dbg_values *v);
 typedef struct dbg_breakpoint {
     int id;
     bool enabled;
+    char func[256];
     char file[512];
     char fullname[1024];
     int line;
+    uint64_t addr;
     int nlocations;
 } dbg_breakpoint;
+
+typedef struct dbg_insn {
+    uint64_t addr;
+    long offset;                   /* from the function's start */
+    char func[128];
+    char text[160];                /* "mov    %rsp,%rbp" */
+} dbg_insn;
+
+typedef struct dbg_register {
+    char name[32];                 /* as requested ("rax", "xmm0:64") */
+    uint64_t value;
+    int size;                      /* 0 when unavailable */
+} dbg_register;
+
+typedef struct dbg_symbol {        /* a function with debug info */
+    char name[256];
+    char file[256];
+    char fullname[1024];
+    int line;                      /* of its first instruction */
+    uint64_t addr;
+} dbg_symbol;
+
+typedef struct dbg_thread {
+    int id;
+    long lwp;                      /* the kernel's id, 0 if unknown */
+    bool current;
+    char state[32];
+    char func[128];
+} dbg_thread;
 
 enum dbg_stop_reason {
     DBG_STOP_BREAKPOINT,           /* a user breakpoint */
@@ -109,6 +141,13 @@ enum dbg_event_type {
     DBG_EV_BP_DELETED,             /* bp.id, cookie */
     DBG_EV_VALUES,                 /* values (the receiver owns them), cookie */
     DBG_EV_ASSIGNED,               /* cookie */
+    DBG_EV_DISASM,                 /* insns, ninsns */
+    DBG_EV_REGISTERS,              /* regs, nregs */
+    DBG_EV_SYMBOLS,                /* files (symbols with only file names),
+                                      funcs */
+    DBG_EV_DATA_START,             /* addr */
+    DBG_EV_MEMORY,                 /* addr, bytes, nbytes */
+    DBG_EV_THREADS,                /* threads, nthreads */
     DBG_EV_ERROR,                  /* message, request, cookie */
     DBG_EV_DIED,                   /* the engine went away */
 };
@@ -124,12 +163,23 @@ enum dbg_request {
     DBG_REQ_FRAMES,
     DBG_REQ_VALUES,
     DBG_REQ_ASSIGN,
+    DBG_REQ_BP_ADDR,
+    DBG_REQ_BP_ENABLE,
+    DBG_REQ_BP_CONDITION,
+    DBG_REQ_DISASM,
+    DBG_REQ_REGISTERS,
+    DBG_REQ_SYMBOLS,
+    DBG_REQ_DATA_START,
+    DBG_REQ_MEMORY,
+    DBG_REQ_WRITE_MEMORY,
+    DBG_REQ_THREADS,
 };
 
 typedef struct dbg_event {
     enum dbg_event_type type;
     enum dbg_stop_reason reason;
     dbg_frame frame;
+    int bkptno;                    /* the breakpoint hit, 0 if none */
     int signo;                     /* 0 when not a signal */
     const char *signame;           /* "SIGSEGV" */
     int exit_code;
@@ -137,6 +187,17 @@ typedef struct dbg_event {
     int nframes;
     dbg_breakpoint bp;
     dbg_values *values;
+    const dbg_insn *insns;
+    int ninsns;
+    const dbg_register *regs;
+    int nregs;
+    const dbg_symbol *files, *funcs;
+    int nfiles, nfuncs;
+    const dbg_thread *threads;
+    int nthreads;
+    uint64_t addr;
+    const unsigned char *bytes;
+    int nbytes;
     const char *message;
     enum dbg_request request;
     void *cookie;                  /* passed through from the request */
@@ -162,6 +223,10 @@ struct dbg_backend_ops {
     void (*bp_line)(dbg_backend *b, const char *file, int line, void *cookie);
     void (*bp_func)(dbg_backend *b, const char *func, void *cookie);
     void (*bp_delete)(dbg_backend *b, int id, void *cookie);
+    void (*bp_addr)(dbg_backend *b, uint64_t addr, void *cookie);
+    void (*bp_enable)(dbg_backend *b, int id, bool on, void *cookie);
+    /* cond NULL or "" makes it unconditional. */
+    void (*bp_condition)(dbg_backend *b, int id, const char *cond, void *cookie);
 
     void (*frames)(dbg_backend *b, int max);
 
@@ -178,6 +243,18 @@ struct dbg_backend_ops {
     /* expr = text, in the program's language. */
     void (*assign)(dbg_backend *b, const char *expr, const char *text,
                    void *cookie);
+
+    /* The function containing addr. */
+    void (*disassemble)(dbg_backend *b, uint64_t addr, void *cookie);
+    /* Registers by debugger name ("rax"; "xmm0:64" is a low lane). */
+    void (*registers)(dbg_backend *b, int level, const char *const *names,
+                      int n, void *cookie);
+    void (*symbols)(dbg_backend *b, void *cookie);
+    void (*data_start)(dbg_backend *b, void *cookie);
+    void (*read_memory)(dbg_backend *b, uint64_t addr, int len, void *cookie);
+    void (*write_memory)(dbg_backend *b, uint64_t addr,
+                         const unsigned char *bytes, int len, void *cookie);
+    void (*threads)(dbg_backend *b, void *cookie);
 };
 
 struct dbg_backend {

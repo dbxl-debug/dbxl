@@ -7,7 +7,10 @@
 
 #include <stdbool.h>
 
+#include <stdint.h>
+
 #include "core/commandlist.h"
+#include "xtk/xtk.h"
 
 struct dbxl_debug_config {
     const char *program;          /* NULL: no program */
@@ -29,6 +32,18 @@ void dbxl_debug_command(enum dbxl_action action);
 void dbxl_debug_source_click(int line);
 /* A left click on Callers line `level`: show that frame. */
 void dbxl_debug_select_frame(int level);
+/* Show a file in Source with `line` in cyan: centred, or from line 1. */
+void dbxl_debug_show_location(const char *file, const char *fullname, int line,
+                              bool from_top);
+/* Margin glyphs (XTK_MARK_*) for breakpoints at an instruction. */
+unsigned char dbxl_debug_addr_marks(uint64_t addr);
+/* A Disassembly click: set or clear a breakpoint at an instruction. */
+void dbxl_debug_toggle_addr(uint64_t addr);
+/* A click in the Breakpoints window. */
+void dbxl_debug_breakpoints_click(const xtk_pane_event *e);
+/* A variable menu's Breakpoint: a trigger on the current line. */
+void dbxl_debug_break_trigger(const char *label, const char *expr,
+                              const char *trigger, bool is_signed);
 /* The Breakpoint dialog: a breakpoint at a function's entry. */
 void dbxl_debug_break_function(const char *name);
 

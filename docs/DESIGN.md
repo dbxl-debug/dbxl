@@ -547,6 +547,7 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
 | AIX stepping (Step over a breakpointed call line stays put, Return from `main` runs on) | GDB's stepping |
 | mono schemes: all glyph fills black, so `-wb` hides the arrow and all breakpoints, and `-bw` makes enabled and disabled breakpoints identical *[obs p7]* | **decided**: in `-bw`/`-wb`, glyph colours come from the scheme. The arrow and enabled stop sign are filled with the foreground colour and outlined in the background colour. The disabled stop sign is a 1px foreground outline with the background showing through. The default colour scheme is unaffected and stays pixel-exact. |
 | POWER registers/disassembly | host architecture (x86-64 first) |
+| Storage keeps `Change Block at Address: ...` as its title after Escape | restores `Storage Pane` |
 | cannot debug dynamically linked programs on AIX 4.3 | not applicable |
 
 ## 12. Open questions
@@ -566,6 +567,7 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
    | Busy pointer | **done** *[obs p10]*: stopwatch, used while xldb works | M3 |
    | Conditional stop sign (`?` fill bitmap), triggers, Breakpoints actions, Disassembly/Registers/Storage/Files/Subprograms/Threads clicks | **done** *[obs p14]* | M5a |
    | Formats window, Save layout / breakpoint files, Help | open | M5b |
+   | After a trigger is set xldb scrolls Source to top line 20 (line 47 on row 27 of 31); rule unknown | open | M5b |
    | Signal command, `-q`, core files (`-co`) | open | M6 |
    | Edit input checked against the style (xldb re-prompts for `-5` on a value shown in hex) | open | M5 |
    | Select subrange, Cast, Downcast, Show self, Function parameter | open | M5 |
@@ -603,8 +605,14 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
    recorded from xldb on `rich` (also at scale 2). Recon pass 13. Menu actions for later
    milestones: Breakpoint (trigger), Select subrange, Cast, Downcast, Show self, Function
    parameter, Storage view with Storage open.
-5. **Remaining panes:** Breakpoints window and actions, Disassembly, Registers, Storage, Files,
-   Subprograms, Threads, Help (own text), Options menu, Save layout, Save Window.
+5. **Remaining panes**, split in two:
+   - **5a** (done): Breakpoints window and actions, conditional breakpoints (triggers, `?` stop
+     sign), Disassembly (x86-64, address breakpoints, Machine step), Registers (§6.1,
+     `intregister` menu), Storage (word menu, in-place edit, Storage view), Threads, Files,
+     Subprograms. Visual test: a 30-step scenario recorded from xldb on `rich` (also at scale
+     2), masking what is machine-specific. Recon pass 14.
+   - **5b:** Help (own text), the Formats window, Options side effects (Save layout,
+     Save/Load breakpoints), the remaining variable-menu actions, Edit input checks.
 6. **Hardening:** core files, attach, signals, deferred breakpoints, `commandList` actions,
    sample layouts. Then evaluate an LLDB backend.
 

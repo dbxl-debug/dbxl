@@ -52,6 +52,12 @@ struct gdbmi {
     FILE *log;                     /* $DBXL_MI_LOG: the MI traffic */
     int inferior_pid;
     char helper_dir[64];           /* holds dbxl.py while GDB runs */
+    /* result buffers, valid during the event callback */
+    dbg_insn *insns;
+    dbg_register *regs;
+    dbg_symbol *syms;
+    dbg_thread *threads;
+    unsigned char *bytes;
 };
 
 static void emit(struct gdbmi *g, dbg_event *ev)
@@ -149,9 +155,14 @@ static void parse_bkpt(const mi_value *b, dbg_breakpoint *bp)
         if (!mi_str(b, "line"))
             where = locs->child;
     }
+    copy(bp->func, sizeof bp->func, mi_str(where, "func"));
     copy(bp->file, sizeof bp->file, mi_str(where, "file"));
     copy(bp->fullname, sizeof bp->fullname, mi_str(where, "fullname"));
     bp->line = (int)mi_int(where, "line", 0);
+    {
+        const char *a = mi_str(where, "addr");
+        bp->addr = a && a[0] == '0' ? strtoull(a, NULL, 16) : 0;
+    }
 }
 
 static char *dup_str(const mi_value *t, const char *key)
@@ -325,6 +336,159 @@ static void on_result(struct gdbmi *g, const mi_record *r)
         ev.type = DBG_EV_ASSIGNED;
         emit(g, &ev);
         break;
+    case DBG_REQ_BP_ADDR:
+    case DBG_REQ_BP_ENABLE:
+    case DBG_REQ_BP_CONDITION: {
+        const mi_value *b = mi_get(r->results, "bkpt");
+        if (p.req == DBG_REQ_BP_ADDR) {
+            if (!b)
+                return;
+            ev.type = DBG_EV_BP_SET;
+            parse_bkpt(b, &ev.bp);
+        } else {
+            /* -break-enable/-condition answer ^done; report the id. */
+            ev.type = DBG_EV_ASSIGNED;
+            ev.bp.id = p.id;
+        }
+        emit(g, &ev);
+        break;
+    }
+    case DBG_REQ_WRITE_MEMORY:
+        ev.type = DBG_EV_ASSIGNED;
+        emit(g, &ev);
+        break;
+    case DBG_REQ_DISASM: {
+        const mi_value *list = mi_get(r->results, "asm_insns");
+        int n = 0;
+
+        for (const mi_value *c = list ? list->child : NULL; c; c = c->next)
+            n++;
+        free(g->insns);
+        g->insns = calloc((size_t)(n ? n : 1), sizeof *g->insns);
+        n = 0;
+        for (const mi_value *c = list ? list->child : NULL; c; c = c->next) {
+            dbg_insn *in = &g->insns[n++];
+            const char *a = mi_str(c, "address");
+            in->addr = a ? strtoull(a, NULL, 16) : 0;
+            in->offset = mi_int(c, "offset", 0);
+            copy(in->func, sizeof in->func, mi_str(c, "func-name"));
+            copy(in->text, sizeof in->text, mi_str(c, "inst"));
+        }
+        ev.type = DBG_EV_DISASM;
+        ev.insns = g->insns;
+        ev.ninsns = n;
+        emit(g, &ev);
+        break;
+    }
+    case DBG_REQ_REGISTERS: {
+        const mi_value *list = mi_get(r->results, "regs");
+        int n = 0;
+
+        for (const mi_value *c = list ? list->child : NULL; c; c = c->next)
+            n++;
+        free(g->regs);
+        g->regs = calloc((size_t)(n ? n : 1), sizeof *g->regs);
+        n = 0;
+        for (const mi_value *c = list ? list->child : NULL; c; c = c->next) {
+            dbg_register *rg = &g->regs[n++];
+            const char *v = mi_str(c, "v");
+            copy(rg->name, sizeof rg->name, mi_str(c, "n"));
+            rg->value = v && *v ? strtoull(v, NULL, 16) : 0;
+            rg->size = v && *v ? (int)mi_int(c, "sz", 0) : 0;
+        }
+        ev.type = DBG_EV_REGISTERS;
+        ev.regs = g->regs;
+        ev.nregs = n;
+        emit(g, &ev);
+        break;
+    }
+    case DBG_REQ_SYMBOLS: {
+        const mi_value *files = mi_get(r->results, "files");
+        const mi_value *funcs = mi_get(r->results, "functions");
+        int nf = 0, nx = 0, k = 0;
+
+        for (const mi_value *c = files ? files->child : NULL; c; c = c->next)
+            nf++;
+        for (const mi_value *c = funcs ? funcs->child : NULL; c; c = c->next)
+            nx++;
+        free(g->syms);
+        g->syms = calloc((size_t)(nf + nx + 1), sizeof *g->syms);
+        for (const mi_value *c = files ? files->child : NULL; c; c = c->next) {
+            dbg_symbol *sy = &g->syms[k++];
+            copy(sy->file, sizeof sy->file, mi_str(c, "file"));
+            copy(sy->fullname, sizeof sy->fullname, mi_str(c, "fullname"));
+        }
+        for (const mi_value *c = funcs ? funcs->child : NULL; c; c = c->next) {
+            dbg_symbol *sy = &g->syms[k++];
+            const char *a = mi_str(c, "addr");
+            copy(sy->name, sizeof sy->name, mi_str(c, "name"));
+            copy(sy->file, sizeof sy->file, mi_str(c, "file"));
+            copy(sy->fullname, sizeof sy->fullname, mi_str(c, "fullname"));
+            sy->line = (int)mi_int(c, "line", 0);
+            sy->addr = a ? strtoull(a, NULL, 16) : 0;
+        }
+        ev.type = DBG_EV_SYMBOLS;
+        ev.files = g->syms;
+        ev.nfiles = nf;
+        ev.funcs = g->syms + nf;
+        ev.nfuncs = nx;
+        emit(g, &ev);
+        break;
+    }
+    case DBG_REQ_DATA_START: {
+        const char *a = mi_str(r->results, "addr");
+        ev.type = DBG_EV_DATA_START;
+        ev.addr = a ? strtoull(a, NULL, 16) : 0;
+        emit(g, &ev);
+        break;
+    }
+    case DBG_REQ_MEMORY: {
+        const mi_value *list = mi_get(r->results, "memory");
+        const mi_value *m = list ? list->child : NULL;
+        const char *hex = m ? mi_str(m, "contents") : NULL;
+        const char *begin = m ? mi_str(m, "begin") : NULL;
+        int n = hex ? (int)strlen(hex) / 2 : 0;
+
+        free(g->bytes);
+        g->bytes = malloc((size_t)(n ? n : 1));
+        for (int i = 0; i < n; i++) {
+            char h[3] = { hex[2 * i], hex[2 * i + 1], 0 };
+            g->bytes[i] = (unsigned char)strtoul(h, NULL, 16);
+        }
+        ev.type = DBG_EV_MEMORY;
+        ev.addr = begin ? strtoull(begin, NULL, 16) : 0;
+        ev.bytes = g->bytes;
+        ev.nbytes = n;
+        emit(g, &ev);
+        break;
+    }
+    case DBG_REQ_THREADS: {
+        const mi_value *list = mi_get(r->results, "threads");
+        const char *cur = mi_str(r->results, "current-thread-id");
+        int n = 0;
+
+        for (const mi_value *c = list ? list->child : NULL; c; c = c->next)
+            n++;
+        free(g->threads);
+        g->threads = calloc((size_t)(n ? n : 1), sizeof *g->threads);
+        n = 0;
+        for (const mi_value *c = list ? list->child : NULL; c; c = c->next) {
+            dbg_thread *t = &g->threads[n++];
+            const char *tid = mi_str(c, "target-id"), *p2;
+            const char *id = mi_str(c, "id");
+            t->id = id ? atoi(id) : 0;
+            t->current = id && cur && strcmp(id, cur) == 0;
+            if (tid && ((p2 = strstr(tid, "LWP ")) || (p2 = strstr(tid, "process "))))
+                t->lwp = strtol(strchr(p2, ' ') + 1, NULL, 10);
+            copy(t->state, sizeof t->state, mi_str(c, "state"));
+            copy(t->func, sizeof t->func, mi_str(mi_get(c, "frame"), "func"));
+        }
+        ev.type = DBG_EV_THREADS;
+        ev.threads = g->threads;
+        ev.nthreads = n;
+        emit(g, &ev);
+        break;
+    }
     case DBG_REQ_BP_DELETE:
         ev.type = DBG_EV_BP_DELETED;
         ev.bp.id = p.id;
@@ -365,6 +529,7 @@ static void on_stopped(struct gdbmi *g, const mi_record *r)
         const char *disp = mi_str(r->results, "disp");
         ev.reason = disp && strcmp(disp, "del") == 0 ? DBG_STOP_RUN_TO
                                                      : DBG_STOP_BREAKPOINT;
+        ev.bkptno = (int)mi_int(r->results, "bkptno", 0);
     } else if (strcmp(reason, "end-stepping-range") == 0 ||
                strcmp(reason, "function-finished") == 0 ||
                strcmp(reason, "location-reached") == 0) {
@@ -650,6 +815,11 @@ static void gdbmi_shutdown(dbg_backend *b)
         g->pid = 0;
     }
     remove_helper(g);
+    free(g->insns);
+    free(g->regs);
+    free(g->syms);
+    free(g->threads);
+    free(g->bytes);
     if (g->log)
         fclose(g->log);
     free(g->buf);
@@ -758,6 +928,78 @@ static void gdbmi_assign(dbg_backend *b, const char *expr, const char *text,
           "-data-evaluate-expression %s", q);
 }
 
+static void gdbmi_bp_addr(dbg_backend *b, uint64_t addr, void *cookie)
+{
+    sendf((struct gdbmi *)b, DBG_REQ_BP_ADDR, cookie, 0,
+          "-break-insert *0x%llx", (unsigned long long)addr);
+}
+
+static void gdbmi_bp_enable(dbg_backend *b, int id, bool on, void *cookie)
+{
+    sendf((struct gdbmi *)b, DBG_REQ_BP_ENABLE, cookie, id, "-break-%s %d",
+          on ? "enable" : "disable", id);
+}
+
+static void gdbmi_bp_condition(dbg_backend *b, int id, const char *cond,
+                               void *cookie)
+{
+    sendf((struct gdbmi *)b, DBG_REQ_BP_CONDITION, cookie, id,
+          "-break-condition %d %s", id, cond ? cond : "");
+}
+
+static void gdbmi_disassemble(dbg_backend *b, uint64_t addr, void *cookie)
+{
+    sendf((struct gdbmi *)b, DBG_REQ_DISASM, cookie, 0,
+          "-data-disassemble -a 0x%llx -- 0", (unsigned long long)addr);
+}
+
+static void gdbmi_registers(dbg_backend *b, int level, const char *const *names,
+                            int n, void *cookie)
+{
+    char args[4096];
+    size_t len = 0;
+
+    args[0] = '\0';
+    for (int i = 0; i < n && len < sizeof args - 40; i++)
+        len += (size_t)snprintf(args + len, sizeof args - len, " %s", names[i]);
+    sendf((struct gdbmi *)b, DBG_REQ_REGISTERS, cookie, 0,
+          "-dbxl-registers %d%s", level, args);
+}
+
+static void gdbmi_symbols(dbg_backend *b, void *cookie)
+{
+    sendf((struct gdbmi *)b, DBG_REQ_SYMBOLS, cookie, 0, "-dbxl-symbols");
+}
+
+static void gdbmi_data_start(dbg_backend *b, void *cookie)
+{
+    sendf((struct gdbmi *)b, DBG_REQ_DATA_START, cookie, 0, "-dbxl-data-start");
+}
+
+static void gdbmi_read_memory(dbg_backend *b, uint64_t addr, int len,
+                              void *cookie)
+{
+    sendf((struct gdbmi *)b, DBG_REQ_MEMORY, cookie, 0,
+          "-data-read-memory-bytes 0x%llx %d", (unsigned long long)addr, len);
+}
+
+static void gdbmi_write_memory(dbg_backend *b, uint64_t addr,
+                               const unsigned char *bytes, int len, void *cookie)
+{
+    char hex[1024];
+    int n = 0;
+
+    for (int i = 0; i < len && n < (int)sizeof hex - 3; i++)
+        n += snprintf(hex + n, sizeof hex - (size_t)n, "%02x", bytes[i]);
+    sendf((struct gdbmi *)b, DBG_REQ_WRITE_MEMORY, cookie, 0,
+          "-data-write-memory-bytes 0x%llx %s", (unsigned long long)addr, hex);
+}
+
+static void gdbmi_threads(dbg_backend *b, void *cookie)
+{
+    sendf((struct gdbmi *)b, DBG_REQ_THREADS, cookie, 0, "-thread-info");
+}
+
 static int gdbmi_pid(dbg_backend *b)
 {
     return ((struct gdbmi *)b)->inferior_pid;
@@ -781,6 +1023,16 @@ static const struct dbg_backend_ops ops = {
     .pid = gdbmi_pid,
     .values = gdbmi_values,
     .assign = gdbmi_assign,
+    .bp_addr = gdbmi_bp_addr,
+    .bp_enable = gdbmi_bp_enable,
+    .bp_condition = gdbmi_bp_condition,
+    .disassemble = gdbmi_disassemble,
+    .registers = gdbmi_registers,
+    .symbols = gdbmi_symbols,
+    .data_start = gdbmi_data_start,
+    .read_memory = gdbmi_read_memory,
+    .write_memory = gdbmi_write_memory,
+    .threads = gdbmi_threads,
 };
 
 dbg_backend *dbg_gdbmi_create(dbg_event_fn fn, void *arg)

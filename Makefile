@@ -15,6 +15,8 @@ SRCS := \
 	src/ui.c \
 	src/debugger.c \
 	src/data.c \
+	src/machine.c \
+	src/browse.c \
 	src/backend/signals.c \
 	src/backend/gdbmi/gdbmi.c \
 	src/backend/gdbmi/mi_parse.c \
@@ -26,6 +28,7 @@ SRCS := \
 	src/core/value.c \
 	src/xtk/chip.c \
 	src/xtk/dialog.c \
+	src/xtk/field.c \
 	src/xtk/display.c \
 	src/xtk/frame.c \
 	src/xtk/gesture.c \

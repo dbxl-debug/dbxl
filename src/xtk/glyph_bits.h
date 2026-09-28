@@ -154,3 +154,18 @@ static const char *const stop_inner[11] = {
     "...#####...",
     "...........",
 };
+
+/* The conditional stop sign's fill: the `?` is left clear (recon pass 14). */
+static const char *const stop_cond_inner[11] = {
+    "...........",
+    "...#####...",
+    "..##...##..",
+    ".##..#..##.",
+    ".##.###.##.",
+    ".####...##.",
+    ".####.####.",
+    ".#########.",
+    "..###.###..",
+    "...#####...",
+    "...........",
+};

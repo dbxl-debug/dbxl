@@ -19,6 +19,11 @@
 #   lo  arrays: the low bound
 #   ch  children (arrays, structs), p the pointee (only for --deref paths)
 #
+#   -dbxl-registers LEVEL NAME...    registers by GDB name; "xmm0:64" and
+#                                    "xmm0:32" read an XMM register's low lane
+#   -dbxl-symbols                    the program's files and functions
+#   -dbxl-data-start                 where the program's data begins
+#
 # Paths name a node: the variable's name, then ".field", "[i]" or "*"
 # (through a pointer), e.g. "sp*.corners*".
 import gdb
@@ -271,6 +276,95 @@ def _globals(deref):
     return out
 
 
+def _registers(level, names):
+    frame = _frame(level)
+    out = []
+    for n in names:
+        base, _, lane = n.partition(":")
+        try:
+            v = frame.read_register(base)
+            if lane:
+                bits = int(lane)
+                raw = int(v["uint128"])
+                val, size = raw & ((1 << bits) - 1), bits // 8
+            else:
+                # Raw bytes: flag types (eflags, mxcsr) don't cast to int.
+                data = bytes(v.bytes)
+                size = len(data)
+                val = int.from_bytes(data, "little")
+            out.append({"n": n, "v": "%x" % val, "sz": str(size)})
+        except (gdb.error, ValueError, KeyError) as e:
+            out.append({"n": n, "v": "", "sz": "0", "err": str(e)})
+    return out
+
+
+def _symbols():
+    """Files and functions with debug info in the program itself."""
+    progname = gdb.current_progspace().filename
+    try:
+        info = gdb.execute_mi("-symbol-info-functions")
+    except gdb.error:
+        return [], []
+    files, funcs, seen = [], [], set()
+    for f in info.get("symbols", {}).get("debug", []):
+        fullname = f.get("fullname") or f.get("filename")
+        for e in f.get("symbols", []):
+            sym = gdb.lookup_global_symbol(e["name"]) or gdb.lookup_static_symbol(e["name"])
+            if sym is None or sym.symtab is None or sym.symtab.objfile.filename != progname:
+                continue
+            try:
+                start = sym.value().address
+                addr = int(start)
+                line = gdb.find_pc_line(addr).line or int(e.get("line", 0))
+            except gdb.error:
+                addr, line = 0, int(e.get("line", 0))
+            funcs.append({"name": e["name"], "file": f.get("filename", ""),
+                          "fullname": fullname, "line": str(line),
+                          "addr": "%x" % addr})
+            if fullname not in seen:
+                seen.add(fullname)
+                files.append({"file": f.get("filename", "").split("/")[-1],
+                              "fullname": fullname})
+    files.sort(key=lambda x: x["file"])
+    funcs.sort(key=lambda x: x["name"])
+    return files, funcs
+
+
+def _data_start():
+    for name in ("__data_start", "data_start", "__DTOR_LIST__"):
+        try:
+            return int(gdb.parse_and_eval("&" + name).cast(
+                gdb.lookup_type("unsigned long long")))
+        except gdb.error:
+            continue
+    return 0
+
+
+class DbxlRegisters(gdb.MICommand):
+    def __init__(self):
+        super().__init__("-dbxl-registers")
+
+    def invoke(self, argv):
+        return {"regs": _registers(int(argv[0]) if argv else 0, argv[1:])}
+
+
+class DbxlSymbols(gdb.MICommand):
+    def __init__(self):
+        super().__init__("-dbxl-symbols")
+
+    def invoke(self, argv):
+        files, funcs = _symbols()
+        return {"files": files, "functions": funcs}
+
+
+class DbxlDataStart(gdb.MICommand):
+    def __init__(self):
+        super().__init__("-dbxl-data-start")
+
+    def invoke(self, argv):
+        return {"addr": "%x" % _data_start()}
+
+
 class DbxlValues(gdb.MICommand):
     def __init__(self):
         super().__init__("-dbxl-values")
@@ -296,3 +390,6 @@ class DbxlValues(gdb.MICommand):
 
 
 DbxlValues()
+DbxlRegisters()
+DbxlSymbols()
+DbxlDataStart()

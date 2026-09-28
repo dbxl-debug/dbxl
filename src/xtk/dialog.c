@@ -186,12 +186,14 @@ static void finish(int button)
     char text[sizeof dlg.le.text];
 
     memcpy(text, dlg.le.text, sizeof text);
+    /* Warp first, as xldb does: the pointer never lands on whatever the
+     * dialog covered, so nothing there autoraises (recon pass 14). */
+    xtk_warp_frame(dlg.ax, dlg.ay);
     free_part(&dlg.b1);
     free_part(&dlg.b2);
     free_part(&dlg.field);
     free_part(&dlg.box);
     XDestroyWindow(xtk_dpy(), dlg.box.win);
-    xtk_warp_frame(dlg.ax, dlg.ay);
     free(dlg.message);
     free(dlg.l1);
     free(dlg.l2);

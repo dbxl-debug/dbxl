@@ -315,6 +315,8 @@ static void redraw(xtk_pane *p)
 
             if (pass == 0 && (mk & XTK_MARK_STOP))
                 xtk_glyph_draw(d, XTK_GLYPH_STOP, y);
+            else if (pass == 0 && (mk & XTK_MARK_STOP_COND))
+                xtk_glyph_draw(d, XTK_GLYPH_STOP_COND, y);
             else if (pass == 0 && (mk & XTK_MARK_STOP_DISABLED))
                 xtk_glyph_draw(d, XTK_GLYPH_STOP_DISABLED, y);
             else if (pass == 1 && (mk & XTK_MARK_ARROW))
@@ -486,9 +488,9 @@ bool xtk_pane_handle_event(xtk_pane *p, const XEvent *ev)
         break;
     case EnterNotify:
         set_active(p, true);
-        /* Not over an open dialog (it is modal and stays in front). */
+        /* Not over an open dialog or edit field (they stay in front). */
         if (autoraise && ev->xcrossing.detail != NotifyInferior &&
-            !xtk_dialog_active())
+            !xtk_dialog_active() && !xtk_field_active())
             xtk_pane_raise(p);
         break;
     case LeaveNotify:

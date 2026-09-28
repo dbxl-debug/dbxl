@@ -12,8 +12,10 @@
 #include "core/layout.h"
 #include "core/options.h"
 #include "core/resources.h"
+#include "browse.h"
 #include "data.h"
 #include "debugger.h"
+#include "machine.h"
 #include "ui.h"
 #include "xtk/xtk.h"
 
@@ -379,6 +381,14 @@ static void pane_event(xtk_pane *p, const xtk_pane_event *e, void *arg)
             dbxl_ui_message("Click on a data object.");
         } else if (i == DBXL_W_CALLERS && dbxl_debug_active()) {
             dbxl_debug_select_frame(e->line);
+        } else if (i == DBXL_W_BREAKPOINTS && dbxl_debug_active()) {
+            dbxl_debug_breakpoints_click(e);
+        } else if ((i == DBXL_W_DISASSEMBLY || i == DBXL_W_REGISTERS ||
+                    i == DBXL_W_STORAGE) && dbxl_debug_active()) {
+            dbxl_machine_click(i, e);
+        } else if ((i == DBXL_W_FILES || i == DBXL_W_SUBPROGRAMS) &&
+                   dbxl_debug_active()) {
+            dbxl_browse_click(i, e);
         }
         break;
     case XTK_PANE_KEY:
@@ -425,7 +435,8 @@ static bool global_event(const XEvent *ev, void *arg)
 {
     (void)arg;
     if (xtk_gesture_handle_event(ev) || xtk_dialog_handle_event(ev) ||
-        xtk_menu_handle_event(ev) || dbxl_data_handle_event(ev))
+        xtk_menu_handle_event(ev) || xtk_field_handle_event(ev) ||
+        dbxl_data_handle_event(ev))
         return true;
     for (int i = 0; i < DBXL_NWINDOWS; i++)
         if (xtk_pane_handle_event(ui.w[i].pane, ev) ||
@@ -499,5 +510,6 @@ void dbxl_ui_init(const struct dbxl_ui_config *cfg)
         xtk_pane_set_lines(ui.w[DBXL_W_THREADS].pane, threads, 2);
     }
     dbxl_data_init();
+    dbxl_machine_init();
     xtk_loop_add_handler(global_event, NULL);
 }

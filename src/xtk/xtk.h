@@ -178,7 +178,8 @@ void xtk_pane_set_selected(xtk_pane *p, int line);       /* -1 = none */
 void xtk_pane_set_top(xtk_pane *p, int top);
 int xtk_pane_top(const xtk_pane *p);
 /* Margin glyphs per line: stop sign or disabled stop sign, then the arrow. */
-enum { XTK_MARK_STOP = 1, XTK_MARK_STOP_DISABLED = 2, XTK_MARK_ARROW = 4 };
+enum { XTK_MARK_STOP = 1, XTK_MARK_STOP_DISABLED = 2, XTK_MARK_ARROW = 4,
+       XTK_MARK_STOP_COND = 8 };
 void xtk_pane_set_marks(xtk_pane *p, const unsigned char *marks, int n);
 /* Per-line text roles: XTK_ROLE_INFO draws a line in the menuInfo colour. */
 enum { XTK_ROLE_NORMAL = 0, XTK_ROLE_INFO = 1 };
@@ -293,6 +294,14 @@ void xtk_lineedit_set(xtk_lineedit *le, const char *text);
 int xtk_lineedit_key(xtk_lineedit *le, const XKeyEvent *kev);
 void xtk_lineedit_draw(const xtk_lineedit *le, Drawable d, int w, int h);
 
+/* field.c: an in-place edit field (text NULL = cancelled). */
+typedef void (*xtk_field_fn)(const char *text, void *arg);
+void xtk_field_open(int fx, int fy, int w, int h, const char *text, int cursor,
+                    xtk_field_fn fn, void *arg);
+void xtk_field_close(void);
+bool xtk_field_active(void);
+bool xtk_field_handle_event(const XEvent *ev);
+
 /* gesture.c: rubber-band outlines and interactive move/resize. */
 void xtk_rubber_draw(xtk_rect outer);                 /* XOR, frame coords */
 bool xtk_gesture_active(void);
@@ -302,7 +311,8 @@ bool xtk_gesture_handle_event(const XEvent *ev);
 Cursor xtk_glyph_pointer_cursor(void);
 Cursor xtk_glyph_busy_cursor(void);
 Pixmap xtk_glyph_icon(void);
-enum xtk_glyph { XTK_GLYPH_ARROW, XTK_GLYPH_STOP, XTK_GLYPH_STOP_DISABLED };
+enum xtk_glyph { XTK_GLYPH_ARROW, XTK_GLYPH_STOP, XTK_GLYPH_STOP_DISABLED,
+                 XTK_GLYPH_STOP_COND };
 /* Draw a margin glyph for the content row whose top is line_top. */
 void xtk_glyph_draw(Drawable d, enum xtk_glyph g, int line_top);
 

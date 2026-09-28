@@ -23,6 +23,9 @@ void dbxl_data_values(dbg_values *v);
 void dbxl_data_assigned(void);
 /* A left click in Locals, Globals or Monitor. */
 void dbxl_data_click(int window, const xtk_pane_event *e);
+/* Open the variable menu for a rendered element (Registers uses it). */
+struct dbxl_span;
+void dbxl_data_open_menu(const struct dbxl_span *s, int fx, int fy);
 /* The menu pane's events, and clicks elsewhere that close it. */
 bool dbxl_data_handle_event(const XEvent *ev);
 

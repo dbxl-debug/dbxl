@@ -17,6 +17,8 @@
 #include "core/layout.h"
 #include "core/value.h"
 #include "data.h"
+#include "debugger.h"
+#include "machine.h"
 #include "ui.h"
 
 enum action {
@@ -87,10 +89,21 @@ static const struct item struct_items[] = {
     I("Storage view", A_STORAGE), END
 };
 
-enum menu_kind { MK_SCALAR, MK_FLOAT, MK_POINTER, MK_ARRAY, MK_STRUCT, MK_N };
+/* A register's menu (title intregister, recon pass 14). */
+static const struct item register_items[] = {
+    H("Style:"), S("character", STYLE_CHARACTER), S("signed", STYLE_SIGNED),
+    S("unsigned", STYLE_UNSIGNED), S("hex", STYLE_HEX), S("type", STYLE_TYPE),
+    S("size", STYLE_SIZE), D("save", A_SAVE), D("recall", A_RECALL),
+    D("default", A_DEFAULT), I("Edit", A_EDIT), I("Breakpoint", A_BREAKPOINT),
+    I("Storage view", A_STORAGE), END
+};
+
+enum menu_kind { MK_SCALAR, MK_FLOAT, MK_POINTER, MK_ARRAY, MK_STRUCT,
+                 MK_REGISTER, MK_N };
 
 static const struct item *const kind_items[MK_N] = {
-    scalar_items, float_items, pointer_items, array_items, struct_items
+    scalar_items, float_items, pointer_items, array_items, struct_items,
+    register_items
 };
 
 #define MENU_X 336
@@ -117,6 +130,10 @@ static struct {
     char menu_key[600];
     char menu_expr[1100];
     char menu_text[256];             /* the value as displayed */
+    char menu_label[1100];            /* the object, for trigger entries */
+    uint64_t menu_addr;              /* for Storage view */
+    bool menu_has_addr;
+    bool menu_signed;                /* the style compares signed */
     int ax, ay;                      /* the click that opened it */
     char last_chosen[32];            /* the item chosen last, any menu */
     char kind_last[MK_N][32];        /* ... per kind of menu */
@@ -320,6 +337,7 @@ static enum menu_kind kind_of(const dbg_value *v)
     case DBG_K_POINTER: return MK_POINTER;
     case DBG_K_ARRAY: return MK_ARRAY;
     case DBG_K_STRUCT: case DBG_K_UNION: return MK_STRUCT;
+    case DBG_K_REGISTER: return MK_REGISTER;
     default: return MK_SCALAR;
     }
 }
@@ -364,6 +382,7 @@ static int default_item(const struct item *items, const dbg_value *v)
         return i;
     switch (dd.mk) {
     case MK_STRUCT: return find_item(items, "flatten");
+    case MK_REGISTER: return find_item(items, "hex");
     case MK_POINTER: case MK_ARRAY: return find_item(items, "more");
     default:
         i = find_item(items, style_name(dbxl_default_style(v->kind)));
@@ -399,6 +418,23 @@ static void open_menu(const dbxl_span *s, int ax, int ay)
     snprintf(dd.menu_expr, sizeof dd.menu_expr, "%s", s->v->expr ? s->v->expr : "");
     dbxl_format_value(s->v, s->key, dd.ptrsize, dd.menu_text, sizeof dd.menu_text);
     dd.menu_v.kind = s->v->kind;
+    {
+        dbxl_vstate *st = dbxl_vstate_get(s->key, false);
+        enum dbxl_style style = st && st->style ? st->style
+                                                : dbxl_default_style(s->v->kind);
+        const char *path = strchr(s->key, ':');
+
+        path = path ? strchr(path + 1, ':') : NULL;
+        path = path ? path + 1 : s->key;
+        /* A variable by its name, an element by its expression. */
+        snprintf(dd.menu_label, sizeof dd.menu_label, "%s",
+                 strpbrk(path, ".[*") ? dd.menu_expr : s->v->name);
+        dd.menu_signed = style == STYLE_CHARACTER || style == STYLE_SIGNED ||
+                         style == STYLE_DECIMAL || style == STYLE_SCIENTIFIC;
+        /* A register's Storage view goes to the address it holds. */
+        dd.menu_has_addr = s->v->kind == DBG_K_REGISTER || s->v->has_addr;
+        dd.menu_addr = s->v->kind == DBG_K_REGISTER ? s->v->bits : s->v->addr;
+    }
     dd.ax = ax;
     dd.ay = ay;
     sel = default_item(items, s->v);
@@ -437,6 +473,14 @@ static void edit_done(int button, const char *text, void *arg)
     dd.b->ops->assign(dd.b, dd.menu_expr, text, NULL);
 }
 
+static void trigger_done(int button, const char *text, void *arg)
+{
+    (void)arg;
+    if (button == 0 && dd.menu_expr[0])
+        dbxl_debug_break_trigger(dd.menu_label, dd.menu_expr, text,
+                                 dd.menu_signed);
+}
+
 static void choose(int row)
 {
     const struct item *items = kind_items[dd.mk];
@@ -457,8 +501,8 @@ static void choose(int row)
     st = dbxl_vstate_get(dd.menu_key, true);
     max = dd.mk == MK_POINTER ? 4 : 3;
     g = xtk_pane_geometry(dd.menu);
-    /* Edit's dialog warps the pointer itself (and back when it closes). */
-    close_menu(it->act != A_EDIT);
+    /* The dialogs warp the pointer themselves (and back when they close). */
+    close_menu(it->act != A_EDIT && it->act != A_BREAKPOINT);
 
     switch (it->act) {
     case A_MORE:
@@ -501,8 +545,13 @@ static void choose(int row)
         st->monitored = !st->monitored;
         break;
     case A_STORAGE:
-        if (!xtk_pane_mapped(dbxl_ui_pane(DBXL_W_STORAGE)))
-            dbxl_ui_message("Storage view ignored. Storage pane is hidden");
+        if (dd.menu_has_addr)
+            dbxl_machine_storage_view(dd.menu_addr);
+        return;
+    case A_BREAKPOINT:
+        xtk_dialog_prompt_at("Enter breakpoint trigger:", dd.menu_text,
+                             "proceed", "cancel", g.x, g.y, dd.ax, dd.ay,
+                             trigger_done, NULL);
         return;
     default:
         /* Breakpoint triggers, subranges, casts, Show self, Function
@@ -518,6 +567,11 @@ static void menu_event(xtk_pane *p, const xtk_pane_event *e, void *arg)
     (void)arg;
     if (e->type == XTK_PANE_CLICK && e->button == Button1)
         choose(e->line);
+}
+
+void dbxl_data_open_menu(const dbxl_span *s, int fx, int fy)
+{
+    open_menu(s, fx, fy);
 }
 
 void dbxl_data_click(int window, const xtk_pane_event *e)
