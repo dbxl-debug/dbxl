@@ -273,7 +273,7 @@ All observed *[obs p2-p5]*. These are the rules the value formatter must reprodu
 | Subprograms | sorted, `add()` |
 | Breakpoints | `add [line 7 in test.c]` |
 | Threads | header `-------Label-------  -Thread-  -Mode-  --Wait--  --wchan-  ----SIGNAL---  --State-`, `    All Threads`, rows |
-| Registers | `%-5s: 0x%08x`; FPRs `0x%016x` |
+| Registers | `%-5s: 0x` + hex digits = the register's natural size (xldb: GPRs `%08x`, FPRs `%016x`); names in upper case; longer names push their colon right (§6.1) |
 | Storage | `%08X:` then 4 x `%08X`, then 16 chars; unprintable -> `ú` (0xFA) |
 | Disassembly | `0x%08x (+0x%04x)  mnem  operands`; first line `(+000000)` |
 | Locals title | `Locals for main() in test.c`; `Locals for [unknown]()` when none |
@@ -300,6 +300,32 @@ build of the recon test programs (`gcc -m32`) doubles as a fidelity check, since
 formats should match the AIX captures exactly.
 
 Registers and disassembly are the host architecture's (x86-64 first), not POWER.
+
+### 6.1 Register groups (decided 2026-09-27)
+dbxl defines its own per-architecture register table. GDB's register groups aren't used: its
+`general` group mixes in segment, mask and shadow-stack registers. The backend only supplies
+values. xldb's groups are kept, and x86-64 registers are mapped to them by role:
+
+| Group (resource, Options -> Register control) | Default | x86-64 | POWER analogue |
+|---|---|---|---|
+| Special (`specialRegisters`) | **Show** (as observed; the xldb help's "Hide" is wrong) | `RIP EFLAGS CS SS DS ES FS GS FS_BASE GS_BASE MXCSR` | IAR, MSR/CR/XER, FPSCR |
+| General (`generalRegisters`) | Show | `RAX RBX RCX RDX RSI RDI RBP RSP R8`..`R15` | GPR0..31 |
+| Double (`doubleRegisters`) | Hide | `XMM0`..`XMM15`, low 64-bit lane | FPR0..31 |
+| Float (`floatRegisters`, resource only) | Hide | `XMM0`..`XMM15`, low 32-bit lane | single-precision FPR view |
+
+Display order is Special, General, Double, Float (xldb order), each in table order.
+
+- **Names are upper case** (xldb look), even though GDB uses lower case.
+- **Values:** `0x` plus hex digits for the register's natural size: `RAX` 16, `EFLAGS`/`MXCSR`
+  8, segment registers 4, Double lanes 16, Float lanes 8.
+- **Label:** xldb's `%-5s: ` exactly. Names longer than 5 characters (`EFLAGS`, `FS_BASE`,
+  `GS_BASE`) aren't truncated and push their colon right (`EFLAGS: 0x00000246`). A 64-bit
+  general register row is 25 columns, which fits the default 207px Registers window.
+- **Not shown yet:** upper vector lanes, YMM/ZMM, AVX-512 `K0-7`, x87 `ST0-7` and its control
+  registers, `PL3_SSP`, `ORIG_RAX`, sub-registers (`EAX`, `AL`, ...). A Vector/x87 group is a
+  possible later enhancement (§14).
+- **32-bit x86 (future):** Special `EIP EFLAGS CS SS DS ES FS GS MXCSR`, General
+  `EAX EBX ECX EDX ESI EDI EBP ESP`, Double/Float `XMM0`..`XMM7`, all at xldb's widths.
 
 ## 7. Backend interface (backend/backend.h)
 
@@ -408,7 +434,7 @@ Each pane is a `textpane` (list of styled lines + hit-test) plus a click handler
 - **Storage:** hex dump. `Storage view` scrolls the target to the top row and messages
   `Storage target address is: %x`. When Storage is hidden, the message is
   `Storage view ignored. Storage pane is hidden`.
-- **Registers:** special set, GPRs, then FPRs when doubles are on (Options -> Register control
+- **Registers:** groups and formats per §6.1: Special, General, then Double/Float when on (Options -> Register control
   -> `Display controls` toggles; the menu stays open while toggling).
 - **Messages:** unmapped until a message arrives, then shown as a title-coloured bar with
   centred text. It clears on the next action.
@@ -448,7 +474,7 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
 1. ~~Mono-scheme glyphs~~ **Decided** (2026-09-27): derive them from the scheme colours, see §11.
 2. ~~Address width~~ **Decided** (2026-09-27): follows the target pointer size, see §6. 32-bit
    targets are planned for a later version.
-3. x86-64 register groups: which registers are "general", "special" and "double"?
+3. ~~x86-64 register groups~~ **Decided** (2026-09-27): see §6.1.
 4. Missing measurements: mono border and scrollbar colours, the resize edge margin, the conditional stop
    sign glyph, the busy pointer, the Formats window, Signal, `-q`, core files.
 5. Does "Size" from the Window Control menu start an outline immediately (help text), or wait
@@ -483,4 +509,5 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
   independence (§6). This mostly adds register tables and tests.
 - **Wider default Disassembly on 64-bit targets,** so x86-64 operands fit without horizontal
   scrolling. Only if the fixed 567px proves painful in practice.
+- **Vector/x87 register group** (YMM/ZMM, `K0-7`, `ST0-7`), §6.1.
 - **LLDB backend** via `lldb-dap` (§7.4).
