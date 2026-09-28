@@ -256,6 +256,67 @@ d = display.Display(); d.screen().root.warp_pointer($((640 * n)), $((512 * n)));
 echo "milestone 5b scenario:"
 m6 "$disp" 1 "$out/m6"
 
+# --- milestone 6 scenario: -r -c -e, the end of the program -------------
+m7() {   # display scale outdir
+    d=$1; n=$2; o=$3
+    DISPLAY=$d python3 -c "
+from Xlib import display
+d = display.Display(); d.screen().root.warp_pointer($((640 * n)), $((512 * n))); d.sync()"
+    (cd "$top/tests/progs" && DISPLAY=$d exec "$top/dbxl" -scale "$n" -i segv -i 19 -r area -c 2 -e 2 ./rich) \
+        >"$o.log" 2>&1 &
+    dbxl=$!
+    i=0
+    until DISPLAY=$d xwininfo -name "dbxl rich" >/dev/null 2>&1; do
+        i=$((i + 1)); [ $i -gt 50 ] && { echo "dbxl ./rich did not appear"; exit 1; }
+        sleep 0.1
+    done
+    sleep 2
+    rm -rf "$o"
+    mkdir -p "$o"
+    if python3 "$top/tests/visual/scenario_m7.py" "$d" "$o" --wait 1.2 --scale "$n" \
+            >"$o/scenario.log" 2>&1 &&
+       python3 "$top/tests/visual/m7_compare.py" "$o" "$ref" "$o" "$n"; then
+        :
+    else
+        echo "  FAIL (see $o)"
+        fail=1
+    fi
+    kill "$dbxl" 2>/dev/null || true; wait "$dbxl" 2>/dev/null || true; dbxl=
+}
+echo "milestone 6 scenario:"
+m7 "$disp" 1 "$out/m7"
+
+# --- milestone 6 core-file scenario: -co on a core made by mkcore.py -----
+m8() {   # display scale outdir
+    d=$1; n=$2; o=$3
+    (cd "$top/tests/progs" && python3 mkcore.py ./rich area core) || { echo "  FAIL (mkcore)"; fail=1; return; }
+    DISPLAY=$d python3 -c "
+from Xlib import display
+d = display.Display(); d.screen().root.warp_pointer($((640 * n)), $((512 * n))); d.sync()"
+    (cd "$top/tests/progs" && DISPLAY=$d exec "$top/dbxl" -scale "$n" -co ./rich) \
+        >"$o.log" 2>&1 &
+    dbxl=$!
+    i=0
+    until DISPLAY=$d xwininfo -name "dbxl rich" >/dev/null 2>&1; do
+        i=$((i + 1)); [ $i -gt 50 ] && { echo "dbxl ./rich did not appear"; exit 1; }
+        sleep 0.1
+    done
+    sleep 2
+    rm -rf "$o"
+    mkdir -p "$o"
+    if python3 "$top/tests/visual/scenario_m8.py" "$d" "$o" --wait 1.2 --scale "$n" \
+            >"$o/scenario.log" 2>&1 &&
+       python3 "$top/tests/visual/m8_compare.py" "$o" "$ref" "$o" "$n"; then
+        :
+    else
+        echo "  FAIL (see $o)"
+        fail=1
+    fi
+    kill "$dbxl" 2>/dev/null || true; wait "$dbxl" 2>/dev/null || true; dbxl=
+}
+echo "milestone 6 core-file scenario:"
+m8 "$disp" 1 "$out/m8"
+
 # --- startup at scales 2-4: must equal the reference enlarged NxN ---------
 # The frame's logical geometry is multiplied by N, so it is at (33N, 73N).
 # The pointer is placed at logical (640,512), inside Source, as at scale 1.
@@ -341,5 +402,11 @@ m5 "$big" 2 "$out/m5-x2"
 
 echo "milestone 5b scenario -scale 2:"
 m6 "$big" 2 "$out/m6-x2"
+
+echo "milestone 6 scenario -scale 2:"
+m7 "$big" 2 "$out/m7-x2"
+
+echo "milestone 6 core-file scenario -scale 2:"
+m8 "$big" 2 "$out/m8-x2"
 
 exit $fail

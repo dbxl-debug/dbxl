@@ -132,6 +132,8 @@ static struct {
     xtk_rect menu_geom;              /* the menu's place, for the dialogs */
     uint64_t menu_addr;              /* for Storage view */
     bool menu_has_addr;
+    uint64_t param;                  /* Function parameter, for func() */
+    bool have_param;
     bool menu_signed;                /* the style compares signed */
     int ax, ay;                      /* the click that opened it */
     char last_chosen[32];            /* the item chosen last, any menu */
@@ -362,6 +364,27 @@ void dbxl_data_clear_locals(void)
     render_all();
 }
 
+void dbxl_data_clear_all(void)
+{
+    dd.have_locals = false;
+    dbg_values_free(dd.locals);
+    dd.locals = NULL;
+    dbg_values_free(dd.globals);
+    dd.globals = NULL;
+    render_all();
+}
+
+int dbxl_data_ptrsize(void)
+{
+    return dd.ptrsize;
+}
+
+bool dbxl_data_function_parameter(uint64_t *addr)
+{
+    *addr = dd.param;
+    return dd.have_param;
+}
+
 void dbxl_data_values(dbg_values *v)
 {
     if (v->scope == DBG_SCOPE_LOCALS) {
@@ -443,7 +466,7 @@ static int default_item(const struct item *items, const dbg_value *v)
     case MK_REGISTER: return find_item(items, "hex");
     case MK_POINTER: case MK_ARRAY: return find_item(items, "more");
     default:
-        i = find_item(items, style_name(dbxl_default_style(v->kind)));
+        i = find_item(items, style_name(dbxl_default_style(v)));
         return i >= 0 ? i : 1;
     }
 }
@@ -487,7 +510,7 @@ static void open_menu(const dbxl_span *s, int ax, int ay)
     {
         dbxl_vstate *st = dbxl_vstate_get(s->key, false);
         enum dbxl_style style = st && st->style ? st->style
-                                                : dbxl_default_style(s->v->kind);
+                                                : dbxl_default_style(s->v);
         const char *path = strchr(s->key, ':');
 
         path = path ? strchr(path + 1, ':') : NULL;
@@ -678,7 +701,7 @@ static void choose(int row)
         st->detail = more_detail(st, step, max);
         break;
     case A_STYLE:
-        st->style = it->style == dbxl_default_style(dd.menu_v.kind)
+        st->style = it->style == dbxl_default_style(&dd.menu_v)
                         ? STYLE_DEFAULT : it->style;
         break;
     case A_SAVE:
@@ -717,7 +740,11 @@ static void choose(int row)
         open_cast_menu();
         return;
     case A_FUNCPARAM:
-        /* The address goes to the next commandList sub() call (M6). */
+        /* The address goes to the next commandList func() call. */
+        if (dd.menu_has_addr) {
+            dd.param = dd.menu_addr;
+            dd.have_param = true;
+        }
         dbxl_ui_message("Address of selected object will be argument for "
                         "next user command invocation");
         return;
@@ -725,6 +752,11 @@ static void choose(int row)
         st->style = STYLE_DEFAULT;
         break;
     case A_EDIT:
+        if (dbxl_debug_core()) {
+            /* At once, with no dialog (recon pass 17). */
+            dbxl_ui_message("Modification not allowed with core files");
+            return;
+        }
         xtk_dialog_prompt_at("Enter new value:", dd.menu_text, "proceed",
                              "cancel", g.x, g.y, dd.ax, dd.ay, edit_done, NULL);
         return;

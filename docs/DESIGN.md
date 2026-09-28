@@ -433,10 +433,13 @@ from backend-formatted strings, so both backends produce identical text.
 
 | dbxl | GDB/MI |
 |---|---|
-| launch | `gdb --interpreter=mi3 -nx -q`, `-file-exec-and-symbols`, console `set args` (with the terminal redirections) |
+| launch | `gdb --interpreter=mi3 -nx -q`, `mi-async on`, `-file-exec-and-symbols`, console `set args` (with the terminal redirections) |
+| signals | `handle all stop print nopass` (every signal stops; Continue discards it); `-i`: `handle SIG nostop noprint pass` |
 | run to `main` | `-break-insert -t main` + `-exec-run` |
-| core (`-co`) / attach (`-a`) | `-target-select core` / `-target-attach` |
-| Continue / Signal | `-exec-continue` / `-interpreter-exec console "signal N"` |
+| core (`-co`) / attach (`-a`) | `-target-select core` (the signal from the console's "Program terminated with signal") / `-target-attach`; GDB detaches on exit |
+| Continue / Signal | `-exec-continue` / `-interpreter-exec console "signal SIG"` (the stop's signal) |
+| user command `func()` | `-data-evaluate-expression "func(0xADDR)"` |
+| Fork path | `follow-fork-mode`, `detach-on-fork`; Both: when the child's thread appears, `-exec-interrupt --all`, `prctl(PR_SET_PTRACER, ANY)` called in the child, SIGSTOP queued, `-target-detach iN`, and a new `dbxl -a PID` |
 | Next / Step / Machine step / Return | `-exec-next` / `-exec-step` / `-exec-step-instruction` / `-exec-finish` |
 | Restart | `-exec-run` again (breakpoints persist) |
 | breakpoints | `-break-insert [-d] [-c cond] [-f] loc`, `-break-delete`, `-break-enable/-disable`; `-f` gives deferred (pending) breakpoints |
@@ -558,6 +561,7 @@ so the heading it names (section number optional, case ignored) is the top row. 
 | Restart after the program died of a signal leaves no process (`Function source is not available...`) *[obs p17]* | restarts normally |
 | Globals opened after termination briefly shows 0xff garbage (`ratio: -NaNQ`) *[obs p17]* | shows it empty |
 | core-file Disassembly shows `00000000` words (text isn't in the core) *[obs p17]* | the executable's instructions |
+| scalarJustification widths for 4-byte `long` on AIX | 8-byte `long` on 64-bit Linux: a 20-column field |
 
 ## 12. Open questions
 1. ~~Mono-scheme glyphs~~ **Decided** (2026-09-27): derive them from the scheme colours, see §11.
@@ -630,9 +634,14 @@ so the heading it names (section number optional, case ignored) is the top row. 
      input checks. Visual test: a 27-step scenario recorded from xldb on `rich` (also at
      scale 2), masking the Help text. Recon passes 15 and 16.
 6. **Hardening** (recon pass 17):
-   - **Signals:** Signal passes the stop signal (GDB `signal SIG`); Continue/Next/Step/Return
-     discard it (`signal 0` first); `-i`/`ignoreSignals` (GDB `handle SIG nostop noprint
-     pass`).
+   **Done.** Visual tests: `scenario_m7.py` (10 steps: `-r -c -e`, the end of the program,
+   commands after it) and `scenario_m8.py` (5 steps: `-co`), recorded from xldb, at scales
+   1 and 2; the unit tests cover justification, the cuts and per-size styles. Attach, forks,
+   `-q`, `-F` and user-command calls were checked by hand (`tests/progs/forky.c`; the
+   emulator can't run them).
+   - **Signals:** every signal stops the program (`handle all stop print nopass`), so
+     Continue/Next/Step/Return discard it; Signal passes it (GDB `signal SIG`);
+     `-i`/`ignoreSignals` (GDB `handle SIG nostop noprint pass`).
    - **Termination state:** `"<prog>" terminated. Termination code is: -1.` for a signal
      death; everything cleared (blank Locals/Source titles, empty panes); run commands say
      `Can't continue unless at least one thread with a pending signal is Enabled`; Breakpoint
@@ -653,8 +662,12 @@ so the heading it names (section number optional, case ignored) is the top row. 
      breakpoints, frame selection, Globals and Storage work. Disassembly shows the
      executable's code (xldb shows zeros).
    - **Attach** (`-a`, GDB `attach`), from the help: detach on Exit so the process resumes.
-   - Fork handling (Multiprocess debugging, Fork path) via GDB `follow-fork-mode` /
-     `detach-on-fork`, from the help.
+     Linux's Yama (`ptrace_scope` 1) only lets a debugger attach to its descendants.
+   - Fork handling (Multiprocess debugging, Fork path Parent/Child/Both) via GDB
+     `follow-fork-mode` / `detach-on-fork`, from the help. Both starts a second dbxl with
+     `-a` on the child (see §7.2 for the hand-over past Yama).
+   - Exit status (the help): the program's return code if it exited normally, else 255;
+     1 when dbxl fails (`-co` without a core, a failed attach).
    - Then evaluate an LLDB backend (separately).
 
 **Later enhancements (not scheduled):**

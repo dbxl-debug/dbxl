@@ -159,7 +159,7 @@ int dbxl_parse_input(const dbg_value *v, enum dbxl_style st, const char *text,
     trim(text, t, sizeof t);
     if (st == STYLE_DEFAULT || st == STYLE_ADDRESS || st == STYLE_TYPE ||
         st == STYLE_SIZE)
-        st = dbxl_default_style(v->kind);
+        st = dbxl_default_style(v);
 
     switch (v->kind) {
     case DBG_K_FLOAT:

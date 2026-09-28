@@ -15,11 +15,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
 #include "backend/backend.h"
 #include "core/layout.h"
 #include "core/options.h"
 #include "core/source.h"
+#include "core/value.h"
 #include "browse.h"
 #include "data.h"
 #include "machine.h"
@@ -70,6 +72,15 @@ static struct {
     int bp_selected;              /* Breakpoints row with the menu open */
     char bp_file[1024];           /* the breakpoints file, last used */
     bool auto_loaded;             /* loadBreakpoints done */
+    bool auto_breakpoints;        /* automaticBreakpoints: waiting for the
+                                     function list */
+    char stop_signal[32];         /* the signal the program stopped for */
+    char term_msg[300];           /* the termination message */
+    bool exited_normally;         /* for dbxl's exit status */
+    int exit_code;
+    bool mapped;                  /* -q: the window has appeared */
+    char **fetched;               /* fetchSource temporary files */
+    int nfetched;
 } dbg;
 
 static int watched_fd = -1;       /* the backend's descriptor */
@@ -229,6 +240,59 @@ static void update_marks(void)
 }
 
 /*
+ * fetchSource (-F): "%s" in the command is replaced by the file name.  Its
+ * standard output, if any, is the source (kept in a temporary file until
+ * dbxl ends); with none, the search path is tried again (the help).
+ */
+static int fetch_source(const dbg_frame *f, char *path, size_t size)
+{
+    const char *fmt = dbg.cfg.fetch_source, *tmp = getenv("TMPDIR");
+    char cmd[4096], buf[8192];
+    size_t n = 0, got, total = 0;
+    FILE *p;
+    int fd = -1;
+
+    if (!fmt || !*fmt)
+        return -1;
+    for (const char *c = fmt; *c && n < sizeof cmd - 1; c++) {
+        if (c[0] == '%' && c[1] == 's') {
+            n += (size_t)snprintf(cmd + n, sizeof cmd - n, "%s", f->file);
+            c++;
+        } else {
+            cmd[n++] = *c;
+        }
+        if (n >= sizeof cmd)
+            return -1;
+    }
+    cmd[n] = '\0';
+    p = popen(cmd, "r");
+    if (!p)
+        return -1;
+    snprintf(path, size, "%s/dbxl-src-XXXXXX", tmp && *tmp ? tmp : "/tmp");
+    while ((got = fread(buf, 1, sizeof buf, p)) > 0) {
+        if (fd < 0 && (fd = mkstemp(path)) < 0)
+            break;
+        if (write(fd, buf, got) != (ssize_t)got)
+            break;
+        total += got;
+    }
+    pclose(p);
+    if (fd >= 0) {
+        close(fd);
+        if (total > 0) {
+            dbg.fetched = realloc(dbg.fetched,
+                                  (size_t)(dbg.nfetched + 1) * sizeof *dbg.fetched);
+            dbg.fetched[dbg.nfetched++] = strdup(path);
+            return 0;
+        }
+        unlink(path);
+    }
+    /* No output: perhaps it fetched the file into the search path. */
+    return dbxl_source_find(f->file, f->fullname, dbxl_opt.source_path,
+                            dbg.cfg.program, path, size);
+}
+
+/*
  * Show a frame's file.  At a stop the arrow goes on its line; for a frame
  * selected in Callers the arrow stays at the stop (if that is in the same
  * file) and the frame's line gets the cyan bar (recon pass 13).
@@ -243,14 +307,18 @@ static void show_source(const dbg_frame *f, bool stop)
     snprintf(dbg.src_fullname, sizeof dbg.src_fullname, "%s", f->fullname);
     dbg.src = NULL;
     if (f->file[0] &&
-        dbxl_source_find(f->file, f->fullname, dbxl_opt.source_path,
-                         dbg.cfg.program, path, sizeof path) == 0)
+        (dbxl_source_find(f->file, f->fullname, dbxl_opt.source_path,
+                          dbg.cfg.program, path, sizeof path) == 0 ||
+         fetch_source(f, path, sizeof path) == 0))
         dbg.src = dbxl_source_load(path);
 
     if (dbg.src) {
         xtk_pane_set_lines(p, (const char *const *)dbg.src->lines,
                            dbg.src->nlines);
         title = dbg.src->path;
+        for (int i = 0; i < dbg.nfetched; i++)
+            if (strcmp(dbg.fetched[i], dbg.src->path) == 0)
+                title = f->file;          /* fetched: not the temp file */
         dbg.arrow = f->line;
         if (!stop)
             dbg.arrow = dbg.state == ST_STOPPED &&
@@ -287,13 +355,15 @@ static void show_source(const dbg_frame *f, bool stop)
     }
 }
 
-static void clear_arrow(void)
-{
-    dbg.arrow = 0;
-    update_marks();
-}
-
 /* ---- Callers and Locals --------------------------------------------- */
+
+/* Hex digits of an address on the target (16 before the first stop). */
+static int ptr_digits(void)
+{
+    int n = dbxl_data_ptrsize();
+
+    return (n > 0 ? n : 8) * 2;
+}
 
 static void show_callers(const dbg_frame *frames, int n)
 {
@@ -301,11 +371,18 @@ static void show_callers(const dbg_frame *frames, int n)
     char (*text)[300] = calloc((size_t)(n > 0 ? n : 1), sizeof *text);
     const char **lines = calloc((size_t)(n > 0 ? n : 1), sizeof *lines);
 
+    /* maxCalls: with at least that many frames, the first maxCalls - 1
+     * and a `[...]` row (recon pass 17). */
+    if (n >= dbg.cfg.max_calls && dbg.cfg.max_calls > 0)
+        n = dbg.cfg.max_calls;
     for (int i = 0; i < n; i++) {
-        if (frames[i].func[0])
+        if (i == dbg.cfg.max_calls - 1)
+            snprintf(text[i], sizeof text[i], "[...]");
+        else if (frames[i].func[0])
             snprintf(text[i], sizeof text[i], "%s()", frames[i].func);
         else
-            snprintf(text[i], sizeof text[i], "0x%llx()",
+            /* An unnamed frame: its address (`0x00000000`, recon 17). */
+            snprintf(text[i], sizeof text[i], "0x%0*llx", ptr_digits(),
                      (unsigned long long)frames[i].addr);
         lines[i] = text[i];
     }
@@ -394,6 +471,13 @@ static void on_stopped(const dbg_event *ev)
     char sig[128], msg[256];
 
     set_state(ST_STOPPED);
+    if (!dbg.mapped) {
+        /* -q: xldb appears at the first stop. */
+        XMapWindow(xtk_dpy(), xtk_frame());
+        dbg.mapped = true;
+    }
+    snprintf(dbg.stop_signal, sizeof dbg.stop_signal, "%s",
+             ev->reason == DBG_STOP_SIGNAL && ev->signame ? ev->signame : "");
     dbg.frame = ev->frame;
     show_source(&ev->frame, true);
     locals_title(&ev->frame);
@@ -405,12 +489,14 @@ static void on_stopped(const dbg_event *ev)
         if (dbg.cfg.load_breakpoints)
             dbxl_debug_load_breakpoints(dbxl_debug_breakpoints_file());
     }
-    dbg.b->ops->frames(dbg.b, MAX_CALLERS);
+    dbg.b->ops->frames(dbg.b, dbg.cfg.max_calls);
     /* After the frames, so Callers isn't kept waiting. */
     if (!dbg.have_symbols) {
         dbg.have_symbols = true;
         dbg.b->ops->symbols(dbg.b, dbxl_opt.subprograms_all, NULL);
         dbg.b->ops->types(dbg.b, NULL);
+        /* automaticBreakpoints: every function, once they are listed. */
+        dbg.auto_breakpoints = dbg.cfg.automatic_breakpoints;
     }
     switch (ev->reason) {
     case DBG_STOP_BREAKPOINT: {
@@ -426,9 +512,68 @@ static void on_stopped(const dbg_event *ev)
                  sig);
         dbxl_ui_message(msg);
         break;
+    case DBG_STOP_CORE:
+        /* A core file (recon pass 17). */
+        if (ev->signame) {
+            dbg_signal_text(0, ev->signame, sig, sizeof sig);
+            snprintf(msg, sizeof msg, "Program terminated by signal %s.", sig);
+            dbxl_ui_message(msg);
+        }
+        break;
     default:
         break;
     }
+}
+
+/*
+ * The program has ended.  xldb empties every pane, blanks the Locals and
+ * Source titles, and keeps the termination message (recon pass 17).
+ */
+static void terminated_display(void)
+{
+    xtk_pane *src = pane(DBXL_W_SOURCE);
+
+    dbg.src = NULL;
+    dbg.src_file[0] = dbg.src_fullname[0] = '\0';
+    dbg.arrow = 0;
+    xtk_pane_set_lines(src, NULL, 0);
+    xtk_pane_set_top(src, 0);
+    xtk_pane_set_title(src, "");
+    xtk_pane_set_selected(src, -1);
+    update_marks();
+    xtk_pane_set_title(pane(DBXL_W_LOCALS), "");
+    /* The Subprograms and Files highlights go too (recon pass 17). */
+    xtk_pane_set_selected(pane(DBXL_W_SUBPROGRAMS), -1);
+    xtk_pane_set_selected(pane(DBXL_W_FILES), -1);
+    show_callers(NULL, 0);
+    dbg.nframes = 0;
+    dbxl_data_clear_all();
+    dbxl_machine_terminated();
+    dbxl_ui_message(dbg.term_msg);
+}
+
+static void on_terminated(const dbg_event *ev)
+{
+    set_state(ST_EXITED);
+    dbg.stop_signal[0] = '\0';
+    if (ev->type == DBG_EV_EXITED) {
+        dbg.exited_normally = true;
+        dbg.exit_code = ev->exit_code;
+        snprintf(dbg.term_msg, sizeof dbg.term_msg,
+                 "Program exited with return code %d.", ev->exit_code);
+    } else {
+        /* A signal death: xldb reports it with code -1. */
+        dbg.exited_normally = false;
+        snprintf(dbg.term_msg, sizeof dbg.term_msg,
+                 "\"%s\" terminated. Termination code is: -1.",
+                 dbg.cfg.program ? dbg.cfg.program : "");
+    }
+    if (!dbg.mapped) {
+        /* -q and no signal: dbxl leaves with the program's return code. */
+        xtk_loop_quit(0);
+        return;
+    }
+    terminated_display();
 }
 
 /* GDB's errors can span lines; the Messages bar shows the first. */
@@ -473,7 +618,19 @@ static void on_error(const dbg_event *ev)
     case DBG_REQ_BP_ENABLE:
         break;
     case DBG_REQ_BP_ADDR:
+    case DBG_REQ_CALL:
         error_message(ev->message);
+        break;
+    case DBG_REQ_CORE:
+    case DBG_REQ_ATTACH:
+        /* xldb says so on stderr and exits 1 (recon pass 17). */
+        if (ev->request == DBG_REQ_ATTACH)
+            fprintf(stderr, "dbxl: Unable to attach to process %d. %s\n",
+                    dbg.cfg.attach_pid, ev->message);
+        else
+            fprintf(stderr, "dbxl: Read failed for corefile: %s\n", ev->message);
+        dbg.load_failed = true;
+        xtk_loop_quit(1);
         break;
     case DBG_REQ_START:
         /* The program could not be loaded; what follows fails too. */
@@ -491,10 +648,10 @@ static void on_error(const dbg_event *ev)
     }
 }
 
+static void start_child_debugger(int pid);
+
 static void on_event(const dbg_event *ev, void *arg)
 {
-    char sig[128], msg[256];
-
     (void)arg;
     if (ev->type == DBG_EV_STOPPED || ev->type == DBG_EV_EXITED ||
         ev->type == DBG_EV_SIGNALLED || ev->type == DBG_EV_DIED)
@@ -508,26 +665,11 @@ static void on_event(const dbg_event *ev, void *arg)
         on_stopped(ev);
         break;
     case DBG_EV_EXITED:
-        set_state(ST_EXITED);
-        clear_arrow();
-        show_callers(NULL, 0);
-        dbg.nframes = 0;
-        dbxl_data_clear_locals();
-        dbxl_machine_exited();
-        snprintf(msg, sizeof msg, "Program exited with return code %d.",
-                 ev->exit_code);
-        dbxl_ui_message(msg);
-        break;
     case DBG_EV_SIGNALLED:
-        set_state(ST_EXITED);
-        clear_arrow();
-        show_callers(NULL, 0);
-        dbg.nframes = 0;
-        dbxl_data_clear_locals();
-        dbxl_machine_exited();
-        dbg_signal_text(0, ev->signame, sig, sizeof sig);
-        snprintf(msg, sizeof msg, "Program terminated by signal %s.", sig);
-        dbxl_ui_message(msg);
+        on_terminated(ev);
+        break;
+    case DBG_EV_FORKED:
+        start_child_debugger(ev->exit_code);
         break;
     case DBG_EV_FRAMES:
         free(dbg.frames);
@@ -565,6 +707,10 @@ static void on_event(const dbg_event *ev, void *arg)
         break;
     case DBG_EV_SYMBOLS:
         dbxl_browse_event(ev);
+        if (dbg.auto_breakpoints) {
+            dbg.auto_breakpoints = false;
+            dbxl_debug_break_all();
+        }
         break;
     case DBG_EV_TYPES:
         dbxl_data_types(ev->names, ev->nnames);
@@ -616,7 +762,10 @@ void dbxl_debug_init(const struct dbxl_debug_config *cfg)
                  "%s%s ", n && dbxl_opt.source_path[n - 1] != ' ' ? " " : "",
                  cfg->include[i]);
     }
-    if (!cfg->program)
+    if (dbg.cfg.max_calls <= 0)
+        dbg.cfg.max_calls = 100;
+    dbg.mapped = !cfg->quiet;
+    if (!cfg->program && cfg->attach_pid <= 0)
         return;
     for (int fd = 0; fd <= 2 && !tty; fd++)
         if (isatty(fd))
@@ -634,8 +783,24 @@ void dbxl_debug_init(const struct dbxl_debug_config *cfg)
     l.program = cfg->program;
     l.argc = cfg->argc;
     l.argv = cfg->argv;
-    l.run_to = cfg->run_to ? cfg->run_to : "main";
+    /* -q runs until the program stops by itself (a signal). */
+    l.run_to = cfg->quiet ? NULL : cfg->run_to ? cfg->run_to : "main";
     l.tty = tty;
+    l.core = cfg->core;
+    l.attach_pid = cfg->attach_pid;
+    {
+        static const char *names[64];
+        for (int i = 0; i < cfg->nignore && i < 64; i++)
+            names[i] = cfg->ignore[i];
+        l.ignore = names;
+        l.nignore = cfg->nignore < 64 ? cfg->nignore : 64;
+    }
+    l.no_shared = cfg->no_shared;
+    l.verbose = cfg->verbose;
+    l.max_array = dbxl_fmt.max_array;
+    l.max_string = dbxl_fmt.max_string;
+    l.follow_child = dbxl_opt.fork_path == FORK_CHILD;
+    l.keep_forks = dbxl_opt.multiprocess && dbxl_opt.fork_path == FORK_BOTH;
     dbg.b = dbg_gdbmi_create(on_event, NULL);
     dbxl_data_set_backend(dbg.b);
     dbg.bp_selected = -1;
@@ -653,6 +818,13 @@ void dbxl_debug_init(const struct dbxl_debug_config *cfg)
 
 void dbxl_debug_shutdown(void)
 {
+    for (int i = 0; i < dbg.nfetched; i++) {
+        unlink(dbg.fetched[i]);
+        free(dbg.fetched[i]);
+    }
+    free(dbg.fetched);
+    dbg.fetched = NULL;
+    dbg.nfetched = 0;
     if (!dbg.b)
         return;
     dbxl_data_set_backend(NULL);
@@ -709,13 +881,20 @@ void dbxl_debug_command(enum dbxl_action action)
         return;
     ops = dbg.b->ops;
     if (action == ACT_RESTART) {
-        if (dbg.state == ST_RUNNING || dbg.state == ST_STARTING)
+        if (dbg.state == ST_RUNNING || dbg.state == ST_STARTING ||
+            dbxl_debug_core())
             return;
         set_state(ST_STARTING);
         ops->restart(dbg.b);
         return;
     }
-    if (dbg.state != ST_STOPPED && dbg.state != ST_EXITED)
+    if (dbg.state == ST_EXITED) {
+        /* xldb's (from AIX's debug library), recon pass 17. */
+        dbxl_ui_message("Can't continue unless at least one thread with a "
+                        "pending signal is Enabled");
+        return;
+    }
+    if (dbg.state != ST_STOPPED || dbxl_debug_core())
         return;
     give_terminal();
     switch (action) {
@@ -736,6 +915,11 @@ void dbxl_debug_source_click(int line)
 
     /* xldb drops the Callers highlight on a Source click (recon pass 12). */
     xtk_pane_set_selected(pane(DBXL_W_CALLERS), -1);
+    if (dbg.state == ST_EXITED) {
+        /* No breakpoint: the terminated display comes back (recon 17). */
+        terminated_display();
+        return;
+    }
     if (!dbg.b || !dbg.src || line < 1 || line > dbg.src->nlines) {
         cannot_breakpoint(line);
         return;
@@ -753,6 +937,11 @@ void dbxl_debug_source_click(int line)
 
 void dbxl_debug_break_function(const char *name)
 {
+    if (dbg.state == ST_EXITED) {
+        /* Accepted, but nothing is set (recon pass 17). */
+        dbxl_ui_message(dbg.term_msg);
+        return;
+    }
     if (!dbg.b || !name[0])
         return;
     snprintf(dbg.func, sizeof dbg.func, "%s", name);
@@ -765,6 +954,8 @@ void dbxl_debug_select_frame(int level)
 
     if (dbg.state != ST_STOPPED || level < 0 || level >= dbg.nframes)
         return;
+    if (dbg.nframes >= dbg.cfg.max_calls && level >= dbg.cfg.max_calls - 1)
+        return;                         /* the `[...]` row */
     f = &dbg.frames[level];
     xtk_pane_set_selected(pane(DBXL_W_CALLERS), level);
     show_source(f, false);
@@ -1110,4 +1301,94 @@ void dbxl_debug_options_changed(int item)
         dbg.b->ops->symbols(dbg.b, dbxl_opt.subprograms_all, NULL);
     else if (item == OPT_LOCAL_VARIABLES && dbg.state == ST_STOPPED)
         dbxl_data_refresh(dbg.frame.file[0] ? dbg.frame.func : "", 0);
+}
+
+/* ---- milestone 6: signals, calls, core files, forks ----------------------- */
+
+int dbxl_debug_exit_status(void)
+{
+    return dbg.exited_normally ? dbg.exit_code & 0xff : 255;
+}
+
+bool dbxl_debug_core(void)
+{
+    return dbg.cfg.core != NULL;
+}
+
+bool dbxl_debug_terminated(void)
+{
+    return dbg.state == ST_EXITED;
+}
+
+/*
+ * Signal: resume passing the signal the program stopped for; with none it
+ * is Continue (recon pass 17).
+ */
+void dbxl_debug_signal(void)
+{
+    if (!dbg.b || dbg.state == ST_DEAD || dbxl_debug_core())
+        return;
+    if (dbg.state == ST_EXITED) {
+        dbxl_ui_message("Running...");
+        dbxl_ui_message("Can't continue unless at least one thread with a "
+                        "pending signal is Enabled");
+        return;
+    }
+    if (dbg.state != ST_STOPPED)
+        return;
+    give_terminal();
+    dbg.b->ops->signal(dbg.b, dbg.stop_signal[0] ? dbg.stop_signal : NULL);
+    set_state(ST_RUNNING);
+}
+
+void dbxl_debug_call(const char *func, uint64_t arg, bool has_arg)
+{
+    if (!dbg.b || dbg.state == ST_DEAD)
+        return;
+    if (dbg.state == ST_EXITED) {
+        dbxl_ui_message(dbg.term_msg);
+        return;
+    }
+    dbg.b->ops->call(dbg.b, func, arg, has_arg, NULL);
+}
+
+void dbxl_debug_fork_mode_changed(void)
+{
+    if (dbg.b && !dbxl_debug_core())
+        dbg.b->ops->fork_mode(dbg.b, dbxl_opt.fork_path == FORK_CHILD,
+                              dbxl_opt.multiprocess &&
+                              dbxl_opt.fork_path == FORK_BOTH);
+}
+
+/*
+ * Fork path Both: "starts another copy of xldb which follows the child"
+ * (the help).  The backend has left the child stopped; a new dbxl attaches
+ * to it.
+ */
+static void start_child_debugger(int pid)
+{
+    char self[1024], spid[32];
+    ssize_t n;
+    pid_t p;
+
+    if (!dbg.b || pid <= 0)
+        return;
+    n = readlink("/proc/self/exe", self, sizeof self - 1);
+    if (n <= 0)
+        return;
+    self[n] = '\0';
+    snprintf(spid, sizeof spid, "%d", pid);
+    /* Twice, so the new dbxl isn't left as a zombie of this one. */
+    p = fork();
+    if (p == 0) {
+        if (fork() == 0) {
+            if (dbg.cfg.program)
+                execl(self, self, "-a", spid, dbg.cfg.program, (char *)NULL);
+            else
+                execl(self, self, "-a", spid, (char *)NULL);
+        }
+        _exit(0);
+    }
+    if (p > 0)
+        waitpid(p, NULL, 0);
 }

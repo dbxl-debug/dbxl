@@ -22,8 +22,19 @@ typedef struct dbg_launch {
     const char *program;
     int argc;                      /* program arguments */
     char **argv;
-    const char *run_to;            /* function to stop in first ("main") */
+    const char *run_to;            /* function to stop in first ("main");
+                                      NULL or "" runs to the first signal */
     const char *tty;               /* the program's terminal; NULL = none */
+    const char *core;              /* debug this core file instead */
+    int attach_pid;                /* attach to this process instead */
+    const char *const *ignore;     /* signals passed on without a stop */
+    int nignore;                   /* ("SIGHUP", GDB's names) */
+    bool no_shared;                /* don't read shared objects' symbols */
+    bool verbose;                  /* echo the engine's messages to stderr */
+    int max_array;                 /* array elements to fetch (0 = 1000) */
+    int max_string;                /* string characters to fetch (0 = 256) */
+    bool follow_child;             /* after fork() */
+    bool keep_forks;               /* keep the other process (Both) */
 } dbg_launch;
 
 typedef struct dbg_frame {
@@ -59,6 +70,7 @@ typedef struct dbg_value {
     char *str;                     /* pointers, char arrays: the C string; NULL if none */
     char *expr;                    /* a debugger expression for Edit */
     long lo;                       /* arrays: the low bound */
+    bool more;                     /* arrays: elements beyond the children */
     struct dbg_value *children;    /* arrays, structs */
     int nchildren;
     struct dbg_value *pointee;     /* only for dereferenced paths */
@@ -131,6 +143,7 @@ enum dbg_stop_reason {
     DBG_STOP_RUN_TO,               /* the start-up (run to main) stop */
     DBG_STOP_STEP,                 /* Next/Step/Machine step/Return done */
     DBG_STOP_SIGNAL,               /* the program received a signal */
+    DBG_STOP_CORE,                 /* a core file: signame killed it */
     DBG_STOP_OTHER,
 };
 
@@ -154,6 +167,9 @@ enum dbg_event_type {
     DBG_EV_TYPES,                  /* names, nnames */
     DBG_EV_ERROR,                  /* message, request, cookie */
     DBG_EV_DIED,                   /* the engine went away */
+    DBG_EV_FORKED,                 /* Fork path Both: a child left stopped
+                                      for another debugger; exit_code
+                                      carries its pid */
 };
 
 /* What an error (or result) answers. */
@@ -178,6 +194,9 @@ enum dbg_request {
     DBG_REQ_WRITE_MEMORY,
     DBG_REQ_THREADS,
     DBG_REQ_TYPES,
+    DBG_REQ_CALL,
+    DBG_REQ_CORE,
+    DBG_REQ_ATTACH,
 };
 
 typedef struct dbg_event {
@@ -225,6 +244,16 @@ struct dbg_backend_ops {
     void (*step_insn)(dbg_backend *b);
     void (*finish)(dbg_backend *b);
     void (*restart)(dbg_backend *b);
+    /* Continue delivering signal `name` ("SIGSEGV"); NULL = continue.
+     * The other commands discard the signal a stop was for. */
+    void (*signal)(dbg_backend *b, const char *name);
+    /* Call func(arg) in the program; DBG_EV_ASSIGNED when it returns. */
+    void (*call)(dbg_backend *b, const char *func, uint64_t arg, bool has_arg,
+                 void *cookie);
+    /* After fork(): follow the child or the parent; or (keep) follow the
+     * parent and leave each child stopped for another debugger
+     * (DBG_EV_FORKED). */
+    void (*fork_mode)(dbg_backend *b, bool follow_child, bool keep);
 
     /* Breakpoints: at a source line, or at a function's first instruction. */
     void (*bp_line)(dbg_backend *b, const char *file, int line, void *cookie);
@@ -288,5 +317,7 @@ static inline void dbg_readable(dbg_backend *b) { b->ops->readable(b); }
 
 /* Signal number -> xldb's text, e.g. "11: SIGSEGV (segmentation violation)". */
 void dbg_signal_text(int signo, const char *name, char *buf, int size);
+/* "hup", "8", "sigusr1" -> "SIGHUP"...; false if unknown. */
+bool dbg_signal_name(const char *spec, char *buf, int size);
 
 #endif

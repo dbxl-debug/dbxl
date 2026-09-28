@@ -28,11 +28,13 @@ enum dbxl_option_item {
 
 enum dbxl_register_item { REG_GENERAL, REG_DOUBLE, REG_SPECIAL, REG_NITEMS };
 
+enum { FORK_PARENT, FORK_CHILD, FORK_BOTH };
+
 struct dbxl_options {
     bool local_all;          /* Local variables: Active / All */
     int detail_per_click;
     bool multiprocess;
-    bool fork_child;
+    int fork_path;           /* FORK_PARENT, FORK_CHILD, FORK_BOTH */
     bool autoraise;
     bool compiler_vars;
     bool subprograms_all;

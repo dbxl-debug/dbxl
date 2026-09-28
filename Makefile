@@ -47,7 +47,7 @@ DEPS := $(OBJS:.o=.d)
 
 # Programs the tests debug.  Built in their own directory so their source
 # file is "./test.c" from there, as in the xldb recordings.
-TESTPROGS := tests/progs/test tests/progs/rich
+TESTPROGS := tests/progs/test tests/progs/rich tests/progs/forky
 
 .PHONY: all clean visual test progs
 

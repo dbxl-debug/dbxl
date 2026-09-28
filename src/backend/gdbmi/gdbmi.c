@@ -31,6 +31,9 @@
 #define MAX_PENDING 256
 #define MAX_FRAMES 256
 
+/* Internal requests of the fork hand-over (Fork path Both). */
+enum { REQ_FORK_PRCTL = 1000, REQ_FORK_DETACH };
+
 struct pending {
     long token;
     enum dbg_request req;
@@ -51,6 +54,13 @@ struct gdbmi {
     dbg_frame frames[MAX_FRAMES];
     FILE *log;                     /* $DBXL_MI_LOG: the MI traffic */
     int inferior_pid;
+    bool core;                     /* debugging a core file */
+    bool verbose;                  /* -v: GDB's console text to stderr */
+    char core_signal[32];          /* "SIGSEGV": what killed the core's process */
+    bool keep_forks;               /* Fork path Both: hand children over */
+    char fork_group[16];           /* the new inferior ("i2") */
+    int fork_pid, fork_thread;     /* its process and GDB thread */
+    bool fork_interrupting;        /* the next stop is ours, not the user's */
     char helper_dir[64];           /* holds dbxl.py while GDB runs */
     /* result buffers, valid during the event callback */
     dbg_insn *insns;
@@ -210,6 +220,7 @@ static void parse_value(const mi_value *t, dbg_value *v)
     v->str = s ? strdup(s) : NULL;
     v->expr = dup_str(t, "e");
     v->lo = mi_int(t, "lo", 0);
+    v->more = mi_int(t, "more", 0) != 0;
     if (ch && ch->kind == MI_LIST) {
         int n = 0;
         for (const mi_value *c = ch->child; c; c = c->next)
@@ -308,6 +319,24 @@ static void on_result(struct gdbmi *g, const mi_record *r)
     memset(&ev, 0, sizeof ev);
     ev.request = p.req;
     ev.cookie = p.cookie;
+    switch ((int)p.req) {
+    case REQ_FORK_PRCTL:
+        /* The child stops as soon as GDB lets it go; the parent goes on. */
+        if (g->fork_pid > 0)
+            kill(g->fork_pid, SIGSTOP);
+        sendf(g, (enum dbg_request)REQ_FORK_DETACH, NULL, 0, "-target-detach %s", g->fork_group);
+        return;
+    case REQ_FORK_DETACH:
+        ev.type = DBG_EV_FORKED;
+        ev.exit_code = g->fork_pid;
+        g->fork_group[0] = '\0';
+        g->fork_pid = g->fork_thread = 0;
+        emit(g, &ev);
+        sendf(g, DBG_REQ_EXEC, NULL, 0, "-exec-continue --thread-group i1");
+        return;
+    default:
+        break;
+    }
     if (strcmp(r->klass, "error") == 0) {
         ev.type = DBG_EV_ERROR;
         ev.message = mi_str(r->results, "msg");
@@ -335,9 +364,21 @@ static void on_result(struct gdbmi *g, const mi_record *r)
         emit(g, &ev);
         break;
     case DBG_REQ_ASSIGN:
+    case DBG_REQ_CALL:
         ev.type = DBG_EV_ASSIGNED;
         emit(g, &ev);
         break;
+    case DBG_REQ_CORE: {
+        /* ^connected,frame={...}: the core's stop. */
+        const mi_value *f = mi_get(r->results, "frame");
+        ev.type = DBG_EV_STOPPED;
+        ev.reason = DBG_STOP_CORE;
+        if (f)
+            parse_frame(f, &ev.frame);
+        ev.signame = g->core_signal[0] ? g->core_signal : NULL;
+        emit(g, &ev);
+        break;
+    }
     case DBG_REQ_BP_ADDR:
     case DBG_REQ_BP_ENABLE:
     case DBG_REQ_BP_CONDITION: {
@@ -570,6 +611,17 @@ static void on_stopped(struct gdbmi *g, const mi_record *r)
         ev.type = DBG_EV_SIGNALLED;
         ev.signame = mi_str(r->results, "signal-name");
     }
+    if (g->fork_interrupting && ev.type == DBG_EV_STOPPED) {
+        /* Ours, to hand a fork's child over: not a stop the user sees.
+         * Let any process trace the child (Linux's Yama allows only
+         * ancestors otherwise), then let it go stopped. */
+        char q[200];
+        g->fork_interrupting = false;
+        mi_quote("(int)prctl(1499557217, -1L, 0L, 0L, 0L)", q, sizeof q);
+        sendf(g, (enum dbg_request)REQ_FORK_PRCTL, NULL, 0,
+              "-data-evaluate-expression --thread %d %s", g->fork_thread, q);
+        return;
+    }
     emit(g, &ev);
 }
 
@@ -598,10 +650,48 @@ static void on_line(struct gdbmi *g, const char *line)
         }
         break;
     case MI_NOTIFY:
-        if (strcmp(r->klass, "thread-group-started") == 0)
-            g->inferior_pid = (int)mi_int(r->results, "pid", 0);
-        else if (strcmp(r->klass, "thread-group-exited") == 0)
-            g->inferior_pid = 0;
+        if (strcmp(r->klass, "thread-group-started") == 0) {
+            const char *id = mi_str(r->results, "id");
+            int pid = (int)mi_int(r->results, "pid", 0);
+            if (!id || strcmp(id, "i1") == 0) {
+                g->inferior_pid = g->core ? 0 : pid;
+            } else {
+                /* A fork's child, kept stopped (Fork path Both). */
+                copy(g->fork_group, sizeof g->fork_group, id);
+                g->fork_pid = pid;
+                g->fork_thread = 0;
+            }
+        } else if (strcmp(r->klass, "thread-created") == 0) {
+            const char *grp = mi_str(r->results, "group-id");
+            if (g->keep_forks && grp && g->fork_group[0] &&
+                strcmp(grp, g->fork_group) == 0 && !g->fork_thread) {
+                /* Fork path Both: GDB holds the child while the parent
+                 * runs on; stop everything to hand the child over. */
+                g->fork_thread = (int)mi_int(r->results, "id", 0);
+                g->fork_interrupting = true;
+                sendf(g, DBG_REQ_OTHER, NULL, 0, "-exec-interrupt --all");
+            }
+        } else if (strcmp(r->klass, "thread-group-exited") == 0) {
+            const char *id = mi_str(r->results, "id");
+            if (!id || strcmp(id, "i1") == 0)
+                g->inferior_pid = 0;
+        }
+        break;
+    case MI_CONSOLE:
+    case MI_LOG:
+        if (g->verbose && r->text)
+            fputs(r->text, stderr);
+        /* A core: "Program terminated with signal SIGSEGV, Segmentation
+         * fault." comes before the ^connected. */
+        if (r->type == MI_CONSOLE && r->text &&
+            strncmp(r->text, "Program terminated with signal ", 31) == 0) {
+            const char *n = r->text + 31;
+            size_t len = strcspn(n, ",. \n");
+            if (len >= sizeof g->core_signal)
+                len = sizeof g->core_signal - 1;
+            memcpy(g->core_signal, n, len);
+            g->core_signal[len] = '\0';
+        }
         break;
     default:
         break;
@@ -738,6 +828,26 @@ static void remove_helper(struct gdbmi *g)
     g->helper_dir[0] = '\0';
 }
 
+/* A CLI command through MI. */
+static void console(struct gdbmi *g, const char *cmd)
+{
+    char q[1100];
+
+    mi_quote(cmd, q, sizeof q);
+    sendf(g, DBG_REQ_OTHER, NULL, 0, "-interpreter-exec console %s", q);
+}
+
+static void gdbmi_fork_mode(dbg_backend *b, bool follow_child, bool keep)
+{
+    struct gdbmi *g = (struct gdbmi *)b;
+
+    sendf(g, DBG_REQ_OTHER, NULL, 0, "-gdb-set follow-fork-mode %s",
+          follow_child && !keep ? "child" : "parent");
+    sendf(g, DBG_REQ_OTHER, NULL, 0, "-gdb-set detach-on-fork %s",
+          keep ? "off" : "on");
+    g->keep_forks = keep;
+}
+
 static int gdbmi_start(dbg_backend *b, const dbg_launch *l)
 {
     struct gdbmi *g = (struct gdbmi *)b;
@@ -779,10 +889,43 @@ static int gdbmi_start(dbg_backend *b, const dbg_launch *l)
     fcntl(g->from_gdb, F_SETFD, FD_CLOEXEC);
 
     copy(g->run_to, sizeof g->run_to, l->run_to);
+    g->verbose = l->verbose;
     sendf(g, DBG_REQ_OTHER, NULL, 0, "-gdb-set confirm off");
+    /* GDB reads commands while the program runs (Fork path Both
+     * interrupts it to hand a child over). */
+    sendf(g, DBG_REQ_OTHER, NULL, 0, "-gdb-set mi-async on");
     load_helper(g);
-    mi_quote(l->program, q, sizeof q);
-    sendf(g, DBG_REQ_START, NULL, 0, "-file-exec-and-symbols %s", q);
+    sendf(g, DBG_REQ_OTHER, NULL, 0, "-dbxl-limits %d %d",
+          l->max_array > 0 ? l->max_array : 1000,
+          l->max_string > 0 ? l->max_string + 1 : 256);
+    if (l->no_shared)
+        sendf(g, DBG_REQ_OTHER, NULL, 0, "-gdb-set auto-solib-add off");
+    /*
+     * Every signal stops the program, and the next Continue, Next, Step...
+     * discards it; only Signal passes it on (xldb's help, recon pass 17).
+     * Ignored signals go straight to the program.
+     */
+    console(g, "handle all stop print nopass");
+    for (int i = 0; i < l->nignore; i++) {
+        char h[80];
+        snprintf(h, sizeof h, "handle %s nostop noprint pass", l->ignore[i]);
+        console(g, h);
+    }
+    gdbmi_fork_mode(b, l->follow_child, l->keep_forks);
+    if (l->program) {
+        mi_quote(l->program, q, sizeof q);
+        sendf(g, DBG_REQ_START, NULL, 0, "-file-exec-and-symbols %s", q);
+    }
+    if (l->core) {
+        g->core = true;
+        mi_quote(l->core, q, sizeof q);
+        sendf(g, DBG_REQ_CORE, NULL, 0, "-target-select core %s", q);
+        return 0;
+    }
+    if (l->attach_pid > 0) {
+        sendf(g, DBG_REQ_ATTACH, NULL, 0, "-target-attach %d", l->attach_pid);
+        return 0;
+    }
     {
         /*
          * `set args` hands the text to the startup shell as is, where
@@ -878,6 +1021,34 @@ static void gdbmi_finish(dbg_backend *b)
 static void gdbmi_restart(dbg_backend *b)
 {
     run((struct gdbmi *)b);
+}
+
+static void gdbmi_signal(dbg_backend *b, const char *name)
+{
+    struct gdbmi *g = (struct gdbmi *)b;
+    char cmd[64], q[140];
+
+    if (!name || !*name) {
+        gdbmi_cont(b);
+        return;
+    }
+    snprintf(cmd, sizeof cmd, "signal %s", name);
+    mi_quote(cmd, q, sizeof q);
+    sendf(g, DBG_REQ_EXEC, NULL, 0, "-interpreter-exec console %s", q);
+}
+
+static void gdbmi_call(dbg_backend *b, const char *func, uint64_t arg,
+                       bool has_arg, void *cookie)
+{
+    char expr[400], q[900];
+
+    if (has_arg)
+        snprintf(expr, sizeof expr, "%s(0x%llx)", func, (unsigned long long)arg);
+    else
+        snprintf(expr, sizeof expr, "%s()", func);
+    mi_quote(expr, q, sizeof q);
+    sendf((struct gdbmi *)b, DBG_REQ_CALL, cookie, 0,
+          "-data-evaluate-expression %s", q);
 }
 
 static void gdbmi_bp_line(dbg_backend *b, const char *file, int line,
@@ -1047,6 +1218,9 @@ static const struct dbg_backend_ops ops = {
     .step_insn = gdbmi_step_insn,
     .finish = gdbmi_finish,
     .restart = gdbmi_restart,
+    .signal = gdbmi_signal,
+    .call = gdbmi_call,
+    .fork_mode = gdbmi_fork_mode,
     .bp_line = gdbmi_bp_line,
     .bp_func = gdbmi_bp_func,
     .bp_delete = gdbmi_bp_delete,

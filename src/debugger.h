@@ -22,9 +22,33 @@ struct dbxl_debug_config {
     int ninclude;
     const char *breakpoints_file; /* the breakpointsFile resource */
     bool load_breakpoints;        /* loadBreakpoints (and not -k) */
+    bool quiet;                   /* -q: run to the first signal, then map */
+    const char *core;             /* -co: the core file ("core") */
+    int attach_pid;               /* -a */
+    int max_calls;                /* -c / maxCalls */
+    char (*ignore)[16];           /* -i / ignoreSignals, GDB names */
+    int nignore;
+    bool no_shared;               /* -n / ignoreSharedObjects */
+    bool verbose;                 /* -v */
+    const char *fetch_source;     /* -F / fetchSource */
+    bool automatic_breakpoints;   /* automaticBreakpoints */
 };
 
 void dbxl_debug_init(const struct dbxl_debug_config *cfg);
+/* dbxl's exit status: the program's return code if it exited normally,
+ * else 255. */
+int dbxl_debug_exit_status(void);
+/* Debugging a core file (Commands shows only Edit, Exit, Options, Help;
+ * modifications are refused). */
+bool dbxl_debug_core(void);
+/* The program has ended (exited or killed by a signal). */
+bool dbxl_debug_terminated(void);
+/* The Signal command. */
+void dbxl_debug_signal(void);
+/* A user command's `func()`: call it with the Function parameter. */
+void dbxl_debug_call(const char *func, uint64_t arg, bool has_arg);
+/* The Options menu changed Multiprocess debugging or Fork path. */
+void dbxl_debug_fork_mode_changed(void);
 void dbxl_debug_shutdown(void);
 bool dbxl_debug_active(void);
 

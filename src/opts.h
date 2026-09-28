@@ -19,6 +19,17 @@ struct dbxl_opts {
     int help;                /* -h: print the help text and exit */
     const char *include[32]; /* -I: source directories */
     int ninclude;
+    int attach_pid;          /* -a ProcessId */
+    int core;                /* -co: debug ./core */
+    int max_calls;           /* -c: -1 unset */
+    int max_array;           /* -e: -1 unset */
+    const char *fetch;       /* -F: fetch-source command */
+    const char *ignore[32];  /* -i: signals to pass without stopping */
+    int nignore;
+    int no_shared;           /* -n: ignore shared objects */
+    int quiet;               /* -q: appear only at a signal */
+    const char *run_to;      /* -r: first stop */
+    int verbose;             /* -v */
     const char *program;     /* program to debug */
     int prog_argc;           /* its arguments */
     char **prog_argv;

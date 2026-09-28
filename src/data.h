@@ -20,6 +20,12 @@ void dbxl_data_set_backend(dbg_backend *b);
 void dbxl_data_refresh(const char *func, int level);
 /* The program is gone: no locals. */
 void dbxl_data_clear_locals(void);
+/* The program ended: Locals, Globals and Monitor empty (recon pass 17). */
+void dbxl_data_clear_all(void);
+/* The address chosen with Function parameter, if any. */
+bool dbxl_data_function_parameter(uint64_t *addr);
+/* The target's pointer size, 0 before any values arrived. */
+int dbxl_data_ptrsize(void);
 /* The Formats window's current geometry (for Save layout). */
 xtk_rect dbxl_data_formats_geometry(void);
 /* A DBG_EV_VALUES event; takes ownership of v. */

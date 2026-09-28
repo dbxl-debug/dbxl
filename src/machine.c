@@ -327,6 +327,11 @@ static void edit_done(const char *text, void *arg)
     char *end;
 
     (void)arg;
+    if (text && dbxl_debug_core()) {
+        /* The field closes, the title stays (recon pass 17). */
+        dbxl_ui_message("Storage modification not allowed with core files");
+        return;
+    }
     xtk_pane_set_title(pane(DBXL_W_STORAGE), "Storage Pane");
     if (!text || !mc.b)
         return;
@@ -466,6 +471,30 @@ void dbxl_machine_show_function(uint64_t addr)
     mc.cyan = addr;
     mc.cyan_before = false;
     show_addr(addr);
+}
+
+/*
+ * The program has ended: xldb empties everything; Disassembly's title goes
+ * blank and Storage's becomes `Storage` (recon pass 17).
+ */
+void dbxl_machine_terminated(void)
+{
+    free(mc.insns);
+    mc.insns = NULL;
+    mc.ninsns = 0;
+    mc.have_pc = false;
+    mc.cyan = 0;
+    xtk_pane_set_lines(pane(DBXL_W_DISASSEMBLY), NULL, 0);
+    xtk_pane_set_title(pane(DBXL_W_DISASSEMBLY), "");
+    mc.have_regs = false;
+    xtk_pane_set_lines(pane(DBXL_W_REGISTERS), NULL, 0);
+    free(mc.mem);
+    mc.mem = NULL;
+    mc.nmem = 0;
+    mc.have_base = false;
+    xtk_pane_set_lines(pane(DBXL_W_STORAGE), NULL, 0);
+    xtk_pane_set_title(pane(DBXL_W_STORAGE), "Storage");
+    xtk_pane_set_lines(pane(DBXL_W_THREADS), NULL, 0);
 }
 
 void dbxl_machine_exited(void)

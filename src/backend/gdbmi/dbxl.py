@@ -14,7 +14,8 @@
 #   v   value: integer (decimal), float (repr), enumerator name, pointer
 #       (hex), or an error text for k=error
 #   b   the value's bytes as a little-endian hex integer (hex styles)
-#   s   pointers and char arrays: the C string there (at most 256 bytes)
+#   s   pointers and char arrays: the C string there (at most MAX_STRING)
+#   more arrays: "1" when elements beyond MAX_ELEMENTS were left out
 #   e   a GDB expression for the object (for Edit)
 #   lo  arrays: the low bound
 #   ch  children (arrays, structs), p the pointee (only for --deref paths)
@@ -25,6 +26,8 @@
 #   -dbxl-data-start                 where the program's data begins
 #
 #   -dbxl-types                      the program's type names (tags, typedefs)
+#   -dbxl-limits ELEMENTS CHARS      array elements and string characters to
+#                                    fetch (maxArrayElements, maxString + 1)
 #
 # A --deref argument may also be "range:PATH:LO:HI" (show the pointer at
 # PATH as the elements PATH[LO..HI], as its children) or "cast:PATH:TYPE"
@@ -180,6 +183,8 @@ def _node(v, name, expr, path, deref):
                 node["ch"] = [_node(v[i], str(i), "(%s)[%d]" % (expr, i),
                                     "%s[%d]" % (path, i), deref)
                               for i in range(lo, min(hi, lo + MAX_ELEMENTS - 1) + 1)]
+                if hi - lo + 1 > MAX_ELEMENTS:
+                    node["more"] = "1"
         elif kind == "array":
             lo, hi = st.range()
             node["lo"] = str(lo)
@@ -188,6 +193,8 @@ def _node(v, name, expr, path, deref):
                 ch.append(_node(v[i], str(i), "(%s)[%d]" % (expr, i),
                                 "%s[%d]" % (path, i), deref))
             node["ch"] = ch
+            if hi - lo + 1 > MAX_ELEMENTS:
+                node["more"] = "1"
             if st.target().strip_typedefs().sizeof == 1 and v.address is not None:
                 s = _c_string(int(v.address))
                 if s is not None:
@@ -522,7 +529,20 @@ class DbxlValues(gdb.MICommand):
         raise gdb.GdbError("-dbxl-values: unknown scope " + argv[0])
 
 
+class DbxlLimits(gdb.MICommand):
+    def __init__(self):
+        super().__init__("-dbxl-limits")
+
+    def invoke(self, argv):
+        global MAX_ELEMENTS, MAX_STRING
+        if len(argv) >= 2:
+            MAX_ELEMENTS = max(1, int(argv[0]))
+            MAX_STRING = max(1, int(argv[1]))
+        return {}
+
+
 DbxlValues()
+DbxlLimits()
 DbxlTypes()
 DbxlRegisters()
 DbxlSymbols()

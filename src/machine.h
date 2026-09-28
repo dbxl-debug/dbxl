@@ -21,6 +21,8 @@ void dbxl_machine_select_frame(int level, uint64_t pc);
 void dbxl_machine_show_function(uint64_t addr);
 /* The program is gone. */
 void dbxl_machine_exited(void);
+/* The program ended: empty every machine pane (recon pass 17). */
+void dbxl_machine_terminated(void);
 /* Breakpoints changed: redraw the Disassembly margin. */
 void dbxl_machine_marks_changed(void);
 /* "Storage view": show addr as Storage's top row. */

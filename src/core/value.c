@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "core/value.h"
 
@@ -69,13 +70,107 @@ static enum dbxl_style own_style(const char *key)
     return s ? s->style : STYLE_DEFAULT;
 }
 
-enum dbxl_style dbxl_default_style(enum dbg_kind kind)
+/* ---- settings ----------------------------------------------------------- */
+
+dbxl_format_config dbxl_fmt = { .max_array = 1000, .max_string = 200 };
+
+void dbxl_format_defaults(void)
 {
-    switch (kind) {
-    case DBG_K_INT: case DBG_K_BOOL: return STYLE_SIGNED;
-    case DBG_K_UINT: case DBG_K_UCHAR: return STYLE_UNSIGNED;
+    memset(&dbxl_fmt, 0, sizeof dbxl_fmt);
+    dbxl_fmt.max_array = 1000;
+    dbxl_fmt.max_string = 200;
+}
+
+bool dbxl_parse_styles(const char *text, enum dbxl_style *styles, int n)
+{
+    static const struct { const char *name; enum dbxl_style st; } names[] = {
+        { "-", STYLE_DEFAULT }, { "signed", STYLE_SIGNED },
+        { "unsigned", STYLE_UNSIGNED }, { "hex", STYLE_HEX },
+        { "decimal", STYLE_DECIMAL }, { "scientific", STYLE_SCIENTIFIC },
+    };
+    char word[32];
+    int k = 0;
+
+    while (text && *text && k < n) {
+        size_t len;
+        bool found = false;
+
+        text += strspn(text, " \t");
+        len = strcspn(text, " \t");
+        if (len == 0)
+            break;
+        snprintf(word, sizeof word, "%.*s", (int)len, text);
+        text += len;
+        for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
+            if (strcasecmp(word, names[i].name) == 0) {
+                styles[k++] = names[i].st;
+                found = true;
+                break;
+            }
+        if (!found)
+            return false;
+    }
+    return true;
+}
+
+static int size_index(int size)
+{
+    switch (size) {
+    case 1: return 0;
+    case 2: return 1;
+    case 4: return 2;
+    default: return 3;
+    }
+}
+
+static int float_index(int size)
+{
+    return size <= 4 ? 0 : size <= 8 ? 1 : 2;
+}
+
+int dbxl_float_digits(int size)
+{
+    static const int dflt[3] = { 6, 15, 31 };
+    int i = float_index(size);
+
+    return dbxl_fmt.float_digits[i] > 0 ? dbxl_fmt.float_digits[i] : dflt[i];
+}
+
+/*
+ * The field of a justified scalar: as wide as the longest value of its size
+ * (recon pass 17: 6 for 1 and 2 bytes, as `'\377'` and `-32768`; 11 for 4
+ * bytes; 12 for a float, `-1.23457e+38`).
+ */
+int dbxl_justify_width(enum dbg_kind kind, int size)
+{
+    if (kind == DBG_K_FLOAT) {
+        int d = dbxl_float_digits(size);
+        /* sign, digit, point, d-1 digits, "e+" and the exponent */
+        return 1 + 1 + 1 + (d - 1) + 2 + (size <= 4 ? 2 : size <= 8 ? 3 : 4);
+    }
+    switch (size) {
+    case 1: case 2: return 6;
+    case 4: return 11;
+    default: return 20;
+    }
+}
+
+enum dbxl_style dbxl_default_style(const dbg_value *v)
+{
+    enum dbxl_style st = STYLE_DEFAULT;
+
+    switch (v->kind) {
+    case DBG_K_INT:
+        st = dbxl_fmt.signed_style[size_index(v->size)];
+        return st != STYLE_DEFAULT ? st : STYLE_SIGNED;
+    case DBG_K_UINT: case DBG_K_UCHAR:
+        st = dbxl_fmt.unsigned_style[size_index(v->size)];
+        return st != STYLE_DEFAULT ? st : STYLE_UNSIGNED;
+    case DBG_K_BOOL: return STYLE_SIGNED;
     case DBG_K_CHAR: return STYLE_CHARACTER;
-    case DBG_K_FLOAT: return STYLE_SCIENTIFIC;
+    case DBG_K_FLOAT:
+        st = dbxl_fmt.float_style[float_index(v->size)];
+        return st != STYLE_DEFAULT ? st : STYLE_SCIENTIFIC;
     case DBG_K_POINTER: return STYLE_POINTER;
     case DBG_K_REGISTER: return STYLE_HEX;
     default: return STYLE_DEFAULT;
@@ -179,20 +274,25 @@ void dbxl_format_float(double d, int digits, bool decimal, char *buf, int size)
              nd > 1 ? mant + 1 : "0", "", exp < 0 ? '-' : '+', abs(exp));
 }
 
+/* A string, cut after maxString characters: `"hello"...` (recon pass 17). */
 static void quoted_string(const char *s, char *buf, int size)
 {
-    int n = 0;
+    int n = 0, count = 0;
 
-    if (size < 3)
+    if (size < 6)
         return;
     buf[n++] = '"';
-    for (; *s && n < size - 6; s++) {
+    for (; *s && n < size - 9 && count < dbxl_fmt.max_string; s++, count++) {
         char c[8];
         char_literal((unsigned char)*s, c, sizeof c, '"');
-        for (const char *p = c; *p && n < size - 2; p++)
+        for (const char *p = c; *p && n < size - 5; p++)
             buf[n++] = *p;
     }
     buf[n++] = '"';
+    if (*s) {
+        memcpy(buf + n, "...", 3);
+        n += 3;
+    }
     buf[n] = '\0';
 }
 
@@ -204,7 +304,7 @@ void dbxl_format_value(const dbg_value *v, const char *key, int ptrsize,
     int hexw = v->size * 2;
 
     if (st == STYLE_DEFAULT)
-        st = dbxl_default_style(v->kind);
+        st = dbxl_default_style(v);
     if (v->kind == DBG_K_POINTER)
         hexw = ptrsize * 2;
 
@@ -255,7 +355,7 @@ void dbxl_format_value(const dbg_value *v, const char *key, int ptrsize,
         return;
     }
     case DBG_K_FLOAT:
-        dbxl_format_float(strtod(v->value, NULL), v->size <= 4 ? 6 : 15,
+        dbxl_format_float(strtod(v->value, NULL), dbxl_float_digits(v->size),
                           st == STYLE_DECIMAL, buf, size);
         return;
     case DBG_K_POINTER:
@@ -382,6 +482,7 @@ static void render_aggregate(dbxl_render *r, const dbg_value *v,
     int start = col(r);
     char cpath[520];
     dbxl_vstate *range;
+    bool cut = false;
 
     if (detail <= 1) {
         if (array)
@@ -405,6 +506,13 @@ static void render_aggregate(dbxl_render *r, const dbg_value *v,
     for (int i = 0, shown = 0; i < v->nchildren; i++) {
         const dbg_value *c = &v->children[i];
         int cd;
+
+        /* maxArrayElements: `[ +1 +2  ...]`, or `...]` on its own line
+         * one column in (recon pass 17). */
+        if (array && shown >= dbxl_fmt.max_array) {
+            cut = true;
+            break;
+        }
 
         /* Select subrange on an array shows only those elements. */
         if (range && (v->lo + i < range->lo || v->lo + i > range->hi))
@@ -436,7 +544,51 @@ static void render_aggregate(dbxl_render *r, const dbg_value *v,
         render(r, c, scope, cpath, cd, flat);
         shown++;
     }
+    if (array && v->more && !range)
+        cut = true;
+    if (cut) {
+        if (!flat && detail >= 3) {
+            new_line(r, start + 1);
+            put(r, "...]");
+        } else {
+            put(r, "  ...]");
+        }
+        return;
+    }
     put(r, array ? " ]" : " }");
+}
+
+/*
+ * scalarJustification: numbers and characters in a fixed-width field,
+ * padded left (right), right (left) or both (center, the extra space on
+ * the right).  Pointers, enums and registers are not padded.
+ */
+static void justify(char *text, size_t size, const dbg_value *v,
+                    enum dbxl_style st)
+{
+    int len = (int)strlen(text), w, pad, left;
+
+    if (dbxl_fmt.justify == JUSTIFY_NONE)
+        return;
+    switch (v->kind) {
+    case DBG_K_INT: case DBG_K_UINT: case DBG_K_CHAR: case DBG_K_UCHAR:
+    case DBG_K_BOOL: case DBG_K_FLOAT:
+        break;
+    default:
+        return;
+    }
+    if (st == STYLE_ADDRESS || st == STYLE_TYPE || st == STYLE_SIZE)
+        return;
+    w = dbxl_justify_width(v->kind, v->size);
+    pad = w - len;
+    if (pad <= 0 || (size_t)w >= size)
+        return;
+    left = dbxl_fmt.justify == JUSTIFY_RIGHT ? pad
+         : dbxl_fmt.justify == JUSTIFY_CENTER ? pad / 2 : 0;
+    memmove(text + left, text, (size_t)len);
+    memset(text, ' ', (size_t)left);
+    memset(text + left + len, ' ', (size_t)(pad - left));
+    text[w] = '\0';
 }
 
 static void render(dbxl_render *r, const dbg_value *v, const char *scope,
@@ -449,7 +601,7 @@ static void render(dbxl_render *r, const dbg_value *v, const char *scope,
     make_key(key, sizeof key, scope, path);
     st = own_style(key);
     if (st == STYLE_DEFAULT)
-        st = dbxl_default_style(v->kind);
+        st = dbxl_default_style(v);
     if (dbxl_vstate_get(key, false) && dbxl_vstate_get(key, false)->flat)
         flat = true;
 
@@ -505,6 +657,7 @@ static void render(dbxl_render *r, const dbg_value *v, const char *scope,
         break;
     default:
         dbxl_format_value(v, key, r->ptrsize, text, sizeof text);
+        justify(text, sizeof text, v, st);
         put(r, text);
         break;
     }

@@ -5,3 +5,5 @@
 /tests/progs/rich
 __pycache__/
 /tests/progs/.dbxl.*
+/tests/progs/forky
+/tests/progs/core

@@ -59,7 +59,9 @@ void dbxl_options_item(int k, char *buf, int size)
         fmt(buf, size, 30, "Multiprocess debugging", o->multiprocess ? "yes" : "no");
         break;
     case OPT_FORK_PATH:
-        fmt(buf, size, 30, "Fork path:", o->fork_child ? "Child" : "Parent");
+        fmt(buf, size, 30, "Fork path:",
+            o->fork_path == FORK_CHILD ? "Child"
+            : o->fork_path == FORK_BOTH ? "Both" : "Parent");
         break;
     case OPT_AUTORAISE:
         fmt(buf, size, 30, "Autoraise:", o->autoraise ? "yes" : "no"); break;
@@ -106,7 +108,10 @@ bool dbxl_options_cycle(int k, bool forward)
     switch (k) {
     case OPT_LOCAL_VARIABLES:    o->local_all = !o->local_all; return true;
     case OPT_MULTIPROCESS:       o->multiprocess = !o->multiprocess; return true;
-    case OPT_FORK_PATH:          o->fork_child = !o->fork_child; return true;
+    case OPT_FORK_PATH:
+        /* Parent, Child, Both (the help). */
+        o->fork_path = (o->fork_path + (forward ? 1 : 2)) % 3;
+        return true;
     case OPT_AUTORAISE:          o->autoraise = !o->autoraise; return true;
     case OPT_COMPILER_VARIABLES: o->compiler_vars = !o->compiler_vars; return true;
     case OPT_SUBPROGRAMS:        o->subprograms_all = !o->subprograms_all; return true;

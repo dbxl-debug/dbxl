@@ -383,6 +383,8 @@ static void options_selected(xtk_menu *m, int item, int button, void *arg)
             dbxl_debug_options_changed(item);
         else if (item == OPT_BREAK_ALL && dbxl_opt.break_all)
             dbxl_debug_break_all();
+        else if (item == OPT_MULTIPROCESS || item == OPT_FORK_PATH)
+            dbxl_debug_fork_mode_changed();
         dbxl_options_item(item, buf, sizeof buf);
         xtk_menu_set_item(m, item, buf);   /* the menu stays open */
     }
@@ -419,6 +421,47 @@ static void breakpoint_done(int button, const char *text, void *arg)
         dbxl_debug_break_function(text);
 }
 
+static char call_func[64];
+
+static void call_done(int button, const char *text, void *arg)
+{
+    char *end;
+    uint64_t v;
+
+    (void)arg;
+    if (button != 0)
+        return;
+    text += strspn(text, " ");
+    v = strtoull(text, &end, 16);
+    dbxl_debug_call(call_func, v, end != text);
+}
+
+/*
+ * A user command `Name=func()`: xldb asks for the argument in a compact
+ * prompt prefilled with the Function parameter's address, placed with the
+ * pointer just below its bottom edge, centred (recon pass 17: frame
+ * (556,226) for a click at (761,288)); then it calls func(address).
+ */
+static void call_prompt(const struct dbxl_command *c, int ax, int ay)
+{
+    xtk_rect f = xtk_frame_geometry();
+    uint64_t addr;
+    char text[32] = "";
+    int x = ax - 205, y = ay - 62;
+
+    snprintf(call_func, sizeof call_func, "%s", c->call);
+    if (dbxl_data_function_parameter(&addr))
+        snprintf(text, sizeof text, "%llx", (unsigned long long)addr);
+    if (x + 404 > f.w)
+        x = f.w - 404;
+    if (x < 0)
+        x = 0;
+    if (y < 0)
+        y = 0;
+    xtk_dialog_prompt_at("Enter function parameter (in hex)", text, "proceed",
+                         "cancel", x, y, ax, ay, call_done, NULL);
+}
+
 static void run_command(const struct dbxl_command *c, int ax, int ay)
 {
     switch (c->action) {
@@ -448,8 +491,18 @@ static void run_command(const struct dbxl_command *c, int ax, int ay)
     case ACT_EDIT:
         dbxl_debug_command(c->action);
         break;
+    case ACT_SIGNAL:
+        dbxl_debug_signal();
+        break;
+    case ACT_CALL:
+        call_prompt(c, ax, ay);
+        break;
+    case ACT_NULL:
+        /* A blank or title row: xldb shows the busy pointer and beeps
+         * (recon pass 17). */
+        XBell(xtk_dpy(), 0);
+        break;
     default:
-        /* Signal and subprogram calls: milestone 6. */
         break;
     }
 }

@@ -32,6 +32,7 @@ Help index
   -->    4.4 Setting conditional breakpoints on variables and registers
   --> 5. Options
   --> 6. Saving and restoring breakpoints
+  --> 7. Signals, program end, core files and attaching
 
   --> A. How do I ...?
   --> B. Command-line invocation
@@ -239,7 +240,8 @@ the call, highlighted. The arrow stays where the program stopped.
     Step          : runs to the next source line, stepping into calls.
     Machine step  : runs one machine instruction.
     Return        : runs until the current subprogram returns.
-    Signal        : (not yet available)
+    Signal        : continues the program and passes it the signal it
+                    stopped for (the other commands discard it).
     Edit          : edits the file shown in the Source window.
     Restart       : starts the program again from the beginning.
     Exit          : leaves dbxl (after asking).
@@ -250,7 +252,10 @@ the call, highlighted. The arrow stays where the program stopped.
 
 Each command can also be given with the Alt key shown next to it, when the
 mouse pointer is in any dbxl window. The list of commands can be changed
-with the resource dbxl.commandList.
+with the resource dbxl.commandList. There, Name=function() adds a command
+that calls a function of your program: dbxl asks for its argument (in hex),
+offering the address chosen with "Function parameter" in a variable's menu.
+Left-clicking a blank row only beeps.
 
 
 3.7 The Disassembly window
@@ -481,8 +486,12 @@ Left-click an item to change it; the menu stays open.
                                 shows every variable of the subprogram.
     Detail per click          : left-click decreases, right-click increases
                                 the levels that more and less change.
-    Multiprocess debugging    : (not yet available)
-    Fork path                 : (not yet available)
+    Multiprocess debugging    : yes lets dbxl keep both processes of a
+                                fork (needed for Fork path Both).
+    Fork path                 : which process dbxl follows after fork():
+                                Parent, Child, or Both (another dbxl
+                                attaches to the child; on Linux this needs
+                                /proc/sys/kernel/yama/ptrace_scope 0).
     Autoraise                 : whether windows come to the front when the
                                 mouse enters them.
     Compiler variables        : whether compiler-made variables are shown.
@@ -508,6 +517,35 @@ ones already set.
 
 With the resource dbxl.loadBreakpoints set to true, dbxl loads the saved
 breakpoints when it starts the program; -k prevents that.
+
+
+7. Signals, program end, core files and attaching
+--------------------------------------------------
+
+Every signal the program receives stops it, with a message such as
+"Program stopped during trace by signal 11: SIGSEGV (segmentation
+violation)." Continue (or Next, Step, ...) goes on without the signal;
+Signal passes it to the program. Signals named with -i or the resource
+dbxl.ignoreSignals go straight to the program without stopping it.
+
+When the program ends, dbxl empties its windows and says how: "Program
+exited with return code N." or, when a signal killed it, "\"name\"
+terminated. Termination code is: -1." Left-click Restart to run it again.
+When you leave dbxl, its exit status is the program's return code if the
+program exited normally, and 255 otherwise.
+
+With -co, dbxl shows the core file named core in the current directory,
+written when the program failed: the windows show the failing line and the
+program's state at that moment. Only Edit, Exit, Options and Help are in
+the Commands window, and variables and storage cannot be changed.
+
+With -a ProcessId, dbxl attaches to a running process instead of starting
+the program. When you leave dbxl, the process carries on. On Linux the
+kernel may only let a debugger attach to its own children; see
+/proc/sys/kernel/yama/ptrace_scope.
+
+With -q, dbxl stays hidden while the program runs and appears only if the
+program stops for a signal.
 
 
 A. How do I ...?
@@ -548,8 +586,19 @@ B. Command-line invocation
     -wb                : white on black.
     -scale Factor      : auto, 1, 2, 3 or 4.
     -E Command         : the edit command (%s is the file, %d the line).
+    -F Command         : fetches source files not found (%s is the file).
     -I Directory       : adds Directory to the source search path.
+    -a ProcessId       : attaches to a running process.
+    -c MaxCalls        : the most calls the Callers window lists.
+    -co                : shows the core file ./core of the program.
+    -e MaxElements     : the most elements shown for an array.
+    -i Signal          : passes Signal to the program without stopping
+                         (a number or a name, with or without SIG).
     -k                 : does not load saved breakpoints.
+    -n                 : does not read shared libraries' symbols.
+    -q                 : quiet: appears only when a signal stops the program.
+    -r Subprogram      : where the program first stops (default main).
+    -v                 : shows the debugger's messages as it loads symbols.
     -h                 : prints this help and exits.
 
 
@@ -569,7 +618,19 @@ menuInfoForeground, markBackground, markForeground, cursorForeground,
 mouseBody, mouseOutline, scrollButtonIdle; blackOnWhite and whiteOnBlack.
 
 Behaviour: autoRaise, confirmExit, tagWindows, commandList, runTo, edit,
-breakpointsFile, loadBreakpoints.
+breakpointsFile, loadBreakpoints, maxCalls, ignoreSignals,
+ignoreSharedObjects, fetchSource, automaticBreakpoints (a breakpoint at
+the start of every subprogram), sourceSearchPath, and the Options menu's
+initial settings: localVariables (active|all), detailPerClick,
+multiprocessDebug, forkPath (parent|child|both), caseSensitive,
+generalRegisters, doubleRegisters, specialRegisters (Show|Hide).
+
+Values: maxArrayElements (default 1000), maxString (200 characters),
+scalarJustification (none|left|right|center: numbers in fixed-width
+columns), signedIntegerStyles and unsignedIntegerStyles (a style per size
+1, 2, 4, 8: signed, unsigned, hex or - for the default), floatStyles (per
+size 4, 8, 16: decimal, scientific, hex or -), floatDigits (significant
+digits per size, default 6 and 15).
 
 Layout: with specialLayout set to true, dbxl uses these resources for each
 window W (Breakpoints, Callers, Commands, Disassembly, Files, Formats,
@@ -599,8 +660,11 @@ D. Notes on using dbxl
 E. Common problems
 ------------------
 
-    The program is not being run.
+    Can't continue unless at least one thread with a pending signal is
+    Enabled
         The program has ended. Left-click Restart to start it again.
+    Modification not allowed with core files
+        A core file can be looked at, not changed.
     The source file was not found in the source search path.
         Add the file's directory with -I or "Edit source search path".
     The text is too small.

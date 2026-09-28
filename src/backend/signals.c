@@ -6,7 +6,9 @@
  */
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "backend/backend.h"
 
@@ -59,4 +61,35 @@ void dbg_signal_text(int signo, const char *name, char *buf, int size)
         snprintf(buf, (size_t)size, "%s", name);
     else
         snprintf(buf, (size_t)size, "%d", signo);
+}
+
+/*
+ * xldb's ignoreSignals / -i syntax: a number or a name, with or without
+ * "SIG", in any case ("hup", "8", "sigusr1").  Returns false if unknown.
+ */
+bool dbg_signal_name(const char *spec, char *buf, int size)
+{
+    char want[32];
+    char *end;
+    long n;
+
+    if (!spec || !*spec)
+        return false;
+    n = strtol(spec, &end, 10);
+    if (*end == '\0') {
+        for (size_t i = 0; i < sizeof signals / sizeof signals[0]; i++)
+            if (signals[i].signo == n) {
+                snprintf(buf, (size_t)size, "%s", signals[i].name);
+                return true;
+            }
+        return false;
+    }
+    snprintf(want, sizeof want, "%s%s",
+             strncasecmp(spec, "SIG", 3) == 0 ? "" : "SIG", spec);
+    for (size_t i = 0; i < sizeof signals / sizeof signals[0]; i++)
+        if (strcasecmp(want, signals[i].name) == 0) {
+            snprintf(buf, (size_t)size, "%s", signals[i].name);
+            return true;
+        }
+    return false;
 }
