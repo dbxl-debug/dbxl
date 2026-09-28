@@ -13,6 +13,7 @@ static struct {
     Display *dpy;
     int screen;
     int scale;
+    enum xtk_scheme scheme;
     Window root;
     Colormap cmap;
     unsigned long pixel[XTK_NCOLORS];
@@ -25,22 +26,63 @@ static struct {
 } x;
 
 /*
- * Default colours.  xldb allocates most of these by literal RGB rather than
- * by name (recon pass 9), so RoyalBlue1's value is used even though the
- * documentation says "RoyalBlue".
+ * Colour tables per scheme.  The colour scheme uses xldb's literal RGB
+ * values (recon pass 9: RoyalBlue1's value although the documentation says
+ * "RoyalBlue").  The mono tables are measured from -bw / -wb (passes 7, 8),
+ * except the glyph roles, where dbxl deliberately uses the scheme's colours
+ * instead of xldb's all-black glyphs (DESIGN.md 11).
  */
-static const unsigned int default_rgb[XTK_NCOLORS] = {
-    [XTK_BG]            = 0x4876ff,
-    [XTK_FG]            = 0xffffff,
-    [XTK_TITLE_BG]      = 0x0000cd,   /* MediumBlue */
-    [XTK_TITLE_FG]      = 0xffffff,
-    [XTK_SELECT_BG]     = 0x00ffff,   /* Cyan */
-    [XTK_SELECT_FG]     = 0x000000,
-    [XTK_BORDER_IDLE]   = 0x000000,
-    [XTK_BORDER_ACTIVE] = 0xffffff,
-    [XTK_THUMB]         = 0x5151fb,
-    [XTK_OUTLINE]       = 0x000000,
+#define W 0xffffff
+#define K 0x000000
+static const unsigned int scheme_rgb[3][XTK_NCOLORS] = {
+    [XTK_SCHEME_COLOR] = {
+        [XTK_BG] = 0x4876ff,        [XTK_FG] = W,
+        [XTK_TITLE_BG] = 0x0000cd,  [XTK_TITLE_FG] = W,
+        [XTK_SELECT_BG] = 0x00ffff, [XTK_SELECT_FG] = K,
+        [XTK_BORDER_IDLE] = K,      [XTK_BORDER_ACTIVE] = W,
+        [XTK_THUMB] = 0x5151fb,     [XTK_OUTLINE] = K,
+        [XTK_MENU_HL_BG] = K,       [XTK_MENU_HL_FG] = W,
+        [XTK_MENUINFO_FG] = 0xd0d0d0,
+        [XTK_DIALOG_BG] = 0x0000cd, [XTK_DIALOG_FG] = W,
+        [XTK_FIELD_BG] = 0xadd8e6,  [XTK_FIELD_FG] = K,
+        [XTK_CURSOR] = 0xfa1340,    [XTK_STOP] = 0xfa1340,
+        [XTK_GLYPH_OUTLINE] = 0x000001, [XTK_GLYPH_FILL] = K,
+        [XTK_MARK_BG] = W,          [XTK_MARK_FG] = K,
+        [XTK_POINTER_BODY] = W,     [XTK_POINTER_OUTLINE] = K,
+    },
+    [XTK_SCHEME_BW] = {
+        [XTK_BG] = W,               [XTK_FG] = K,
+        [XTK_TITLE_BG] = K,         [XTK_TITLE_FG] = W,
+        [XTK_SELECT_BG] = K,        [XTK_SELECT_FG] = W,
+        [XTK_BORDER_IDLE] = K,      [XTK_BORDER_ACTIVE] = K,
+        [XTK_THUMB] = K,            [XTK_OUTLINE] = K,
+        [XTK_MENU_HL_BG] = K,       [XTK_MENU_HL_FG] = W,
+        [XTK_MENUINFO_FG] = K,
+        [XTK_DIALOG_BG] = K,        [XTK_DIALOG_FG] = W,
+        [XTK_FIELD_BG] = K,         [XTK_FIELD_FG] = W,
+        [XTK_CURSOR] = W,           [XTK_STOP] = K,
+        [XTK_GLYPH_OUTLINE] = W,    [XTK_GLYPH_FILL] = K,
+        [XTK_MARK_BG] = K,          [XTK_MARK_FG] = W,
+        [XTK_POINTER_BODY] = W,     [XTK_POINTER_OUTLINE] = K,
+    },
+    [XTK_SCHEME_WB] = {
+        [XTK_BG] = K,               [XTK_FG] = W,
+        [XTK_TITLE_BG] = W,         [XTK_TITLE_FG] = K,
+        [XTK_SELECT_BG] = W,        [XTK_SELECT_FG] = K,
+        [XTK_BORDER_IDLE] = W,      [XTK_BORDER_ACTIVE] = W,
+        [XTK_THUMB] = W,            [XTK_OUTLINE] = W,
+        [XTK_MENU_HL_BG] = W,       [XTK_MENU_HL_FG] = K,
+        [XTK_MENUINFO_FG] = W,
+        [XTK_DIALOG_BG] = W,        [XTK_DIALOG_FG] = K,
+        [XTK_FIELD_BG] = W,         [XTK_FIELD_FG] = K,
+        [XTK_CURSOR] = K,           [XTK_STOP] = W,
+        [XTK_GLYPH_OUTLINE] = K,    [XTK_GLYPH_FILL] = W,
+        [XTK_MARK_BG] = W,          [XTK_MARK_FG] = K,
+        [XTK_POINTER_BODY] = W,     [XTK_POINTER_OUTLINE] = K,
+    },
 };
+#undef W
+#undef K
 
 static unsigned long alloc_rgb(unsigned int rgb)
 {
@@ -154,8 +196,7 @@ static int choose_scale(int scale, int fit_w, int fit_h)
     return scale;
 }
 
-bool xtk_open(const char *display_name, const char *font_name,
-              int scale, int fit_w, int fit_h)
+bool xtk_open(const char *display_name)
 {
     x.dpy = XOpenDisplay(display_name);
     if (!x.dpy) {
@@ -166,10 +207,34 @@ bool xtk_open(const char *display_name, const char *font_name,
     x.screen = DefaultScreen(x.dpy);
     x.root = RootWindow(x.dpy, x.screen);
     x.cmap = DefaultColormap(x.dpy, x.screen);
-    x.scale = choose_scale(scale, fit_w, fit_h);
+    return true;
+}
 
-    for (int i = 0; i < XTK_NCOLORS; i++)
-        x.pixel[i] = alloc_rgb(default_rgb[i]);
+/* A colour spec from a resource or option; fall back to the default. */
+static unsigned long alloc_spec(const char *spec, unsigned int dflt)
+{
+    XColor c;
+
+    if (spec && XParseColor(x.dpy, x.cmap, spec, &c) &&
+        XAllocColor(x.dpy, x.cmap, &c))
+        return c.pixel;
+    if (spec)
+        fprintf(stderr, "dbxl: unknown colour %s\n", spec);
+    return alloc_rgb(dflt);
+}
+
+bool xtk_setup(const xtk_config *cfg)
+{
+    const char *font_name = cfg->font ? cfg->font : "8x13";
+
+    x.scale = choose_scale(cfg->scale, cfg->fit_w, cfg->fit_h);
+    x.scheme = cfg->scheme;
+    for (int i = 0; i < XTK_NCOLORS; i++) {
+        unsigned int dflt = scheme_rgb[x.scheme][i];
+        /* Colour resources are ignored in the mono schemes, as in xldb. */
+        x.pixel[i] = x.scheme == XTK_SCHEME_COLOR
+                   ? alloc_spec(cfg->color[i], dflt) : alloc_rgb(dflt);
+    }
 
     x.font = XLoadQueryFont(x.dpy, font_name);
     if (!x.font) {
@@ -218,6 +283,7 @@ void xtk_close(void)
 
 Display *xtk_dpy(void) { return x.dpy; }
 int xtk_scale(void) { return x.scale; }
+bool xtk_mono(void) { return x.scheme != XTK_SCHEME_COLOR; }
 Window xtk_root(void) { return x.root; }
 unsigned long xtk_pixel(enum xtk_color c) { return x.pixel[c]; }
 const xtk_metrics *xtk_metrics_get(void) { return &x.m; }

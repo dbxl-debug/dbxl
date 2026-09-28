@@ -14,10 +14,14 @@ Needs a C11 compiler, the libX11 and libXrender development files and
 
 ## Running
 
-    ./dbxl [-display Display] [-font Font] [-geometry Geometry]
-           [-scale auto|1|2|3|4] [-title Title] [Program [Args...]]
+    ./dbxl [-display Display] [-name Name] [-font Font] [-geometry Geometry]
+           [-title Title] [-bg Color] [-fg Color] [-bw] [-wb]
+           [-scale auto|1|2|3|4] [Program [Args...]]
 
-Milestone 1 shows the default window layout only; no program is debugged yet.
+The user interface is in place (windows, chips, Window Control and Options
+menus, dialogs, move/resize, colour schemes, `.Xdefaults` resources such as
+`dbxl.commandList`, `dbxl.tagWindows` and per-window geometries); debugging a
+program arrives with the GDB backend in milestone 3.
 
 `-scale N` enlarges everything by an exact integer factor for high resolution
 screens (each xldb pixel becomes an NxN block). `-scale auto` picks the
@@ -32,4 +36,5 @@ Geometries (`-geometry`, and later `.Xdefaults`) stay in xldb's 1x units.
 This runs `dbxl` on private `Xvfb` servers and compares screenshots against
 captures of the real xldb in `tests/visual/ref/`, at scale 1 and, enlarged,
 at scales 2-4. It needs `Xvfb`, `xwininfo` and Python 3 with Pillow and
-python-xlib.
+python-xlib. The full run takes a few minutes: most of it replays a 33-step
+scenario that was recorded against the real xldb, at scales 1 and 2.

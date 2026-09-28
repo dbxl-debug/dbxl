@@ -6,7 +6,8 @@ Compare two images pixel by pixel.  GOT is cropped with --crop (e.g. the
 frame's region of a full-screen capture) before comparison; masked
 rectangles (in REF coordinates) are ignored.  --ref-scale enlarges REF
 and the masks by N with nearest-neighbour sampling, to check scaled output
-against a 1x reference (the crop is given in GOT's coordinates).  Prints
+against a 1x reference (the crop is given in GOT's coordinates; a REF of
+the same size as GOT is cropped the same way).  Prints
 the differing regions and writes a diff image (differences in red over a dimmed copy of GOT,
 zoomed 2x) when --out is given.  Exit status 0 when identical, 1 otherwise.
 """
@@ -59,6 +60,9 @@ def main():
         a.mask = [(x * n, y * n, w * n, h * n) for x, y, w, h in a.mask]
     if a.crop:
         x, y, w, h = a.crop
+        # A full-screen reference is cropped the same way.
+        if ref.size == got.size:
+            ref = ref.crop((x, y, x + w, y + h))
         got = got.crop((x, y, x + w, y + h))
     if got.size != ref.size:
         print(f"size mismatch: got {got.size}, ref {ref.size}")

@@ -171,15 +171,18 @@ Observed in *[obs p1, p3, p5]*; this is the part the specs got most wrong.
   - left click on title bar -> Window Control menu.
 - **Window Control menu** (`cellmenu`): title `Window Control` + `Restore, Move, Size, Minimize,
   Maximize, Lower, Horizontal scroll bars, Vertical scroll bars, Save Window`. It opens at the
-  pane's top-left, the pane's content is blanked while it's open, and the default highlight is
-  the last action chosen (initially Minimize). Maximize = the whole frame. Restore = the previous
-  geometry. Save Window = the full-width filename dialog, which writes the visible text lines
-  with a trailing space each.
-- **Menu dismissal:** a click outside closes the menu **and is delivered** to what's underneath
-  (observed; kept for fidelity). Escape closes the menu when the pointer is inside it (xldb
-  ignored it only because focus was elsewhere).
-- **Keyboard focus follows the pointer.** dbxl sets `XSetInputFocus` to the pane under the
-  pointer (or the open dialog) so behaviour matches xldb without a window manager.
+  pane's top-left, the pointer is warped onto the default item (the last action chosen,
+  initially Minimize), and the highlight follows the pointer. Maximize = `2,2` and the frame
+  size less 8 (a 2px margin) *[obs p11]*. Restore = the previous geometry. Save Window = the
+  prompt dialog for a file name, which writes the pane's lines with a trailing space each.
+- **Menu dismissal:** a menu closes as soon as the pointer **leaves** it, and **Escape does
+  nothing** *[obs p11]*. A click outside is therefore delivered to what's underneath. Selecting
+  an item warps the pointer back to where the menu was opened. Full geometry and placement
+  rules for menus, dialogs, the inline strip and Messages are in *[obs p11]* and in
+  `xtk/menu.c`, `xtk/dialog.c` and `xtk/pane.c`.
+- **Keyboard input goes to the window under the pointer**, as X delivers it with the default
+  PointerRoot focus, or with a window manager's focus on the frame. dbxl doesn't manage focus
+  itself.
 
 ## 5. Visual constants
 
@@ -539,12 +542,15 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
 ## 14. Milestones
 1. **Skeleton:** Makefile, event loop, frame with stipple, panes with borders and titles,
    chips, static default layout. Visual test: the startup screenshot minus content.
-2. **xtk complete:** menus (both kinds), dialogs, input strip, scrollbars, rubber band,
-   autoraise, pointer glyph and warping, resources and `-bw`/`-wb`.
+2. **xtk complete** (done): cell menus, dialogs, input strip, scrollbars, rubber band and
+   move/resize, autoraise, pointer glyphs and warping, Messages, resources, `-bw`/`-wb`. Visual
+   tests: a 33-step scenario recorded from xldb (also at scale 2), plus `-bw`, `-wb`,
+   `tagWindows` and the messy sample layout.
 3. **GDB backend:** spawn, MI parser, run to main, Source + arrow + Commands (Continue, Next,
    Step, Return, Machine step, Restart, Exit), Messages.
-4. **Data panes:** Locals, Globals, Monitor with formatter and variable menus. Callers, frame
-   selection.
+4. **Data panes:** Locals, Globals, Monitor with formatter and the list-style variable menus
+   (moved here from milestone 2, since they need variables to compare against xldb). Callers,
+   frame selection, the compact Edit dialog.
 5. **Remaining panes:** Breakpoints window and actions, Disassembly, Registers, Storage, Files,
    Subprograms, Threads, Help (own text), Options menu, Save layout, Save Window.
 6. **Hardening:** core files, attach, signals, deferred breakpoints, `commandList` actions,

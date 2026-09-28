@@ -7,9 +7,10 @@
  * The thumb is filled #5151fb and outlined in black; it is drawn wider than
  * the bar so only its top and bottom lines are visible.
  *
- * Horizontal bars (only the Help pane has one by default) have not been
- * observed yet; their placement and arrows mirror the vertical bar and must
- * be checked against xldb before milestone 2 is done.
+ * A horizontal bar mirrors it at (-2, h-11), w x 9, arrows at (0,0) and
+ * (w-9, 0).  Neither bar is shortened when both are shown (recon pass 10).
+ * In the mono schemes the arrows are filled with the foreground colour
+ * (recon pass 11 corrects pass 8).
  */
 #include <stdlib.h>
 
@@ -42,13 +43,15 @@ static void make_part(struct part *pt, Window parent, int w, int h, int border)
     xtk_surface_init(&pt->surf, pt->win, w, h);
 }
 
-static void fill_outline(Drawable d, XPoint *pts, int n)
+static void fill_outline(Drawable d, XPoint *pts, int n, bool fill)
 {
     Display *dpy = xtk_dpy();
     GC gc = xtk_gc();
 
-    XSetForeground(dpy, gc, xtk_pixel(XTK_THUMB));
-    XFillPolygon(dpy, d, gc, pts, n, Convex, CoordModeOrigin);
+    if (fill) {
+        XSetForeground(dpy, gc, xtk_pixel(XTK_THUMB));
+        XFillPolygon(dpy, d, gc, pts, n, Convex, CoordModeOrigin);
+    }
     XSetForeground(dpy, gc, xtk_pixel(XTK_OUTLINE));
     XDrawLines(dpy, d, gc, pts, n, CoordModeOrigin);
 }
@@ -68,7 +71,7 @@ static void draw_bar(xtk_scrollbar *sb)
     xtk_surface *s = &sb->bar.surf;
 
     xtk_fill_tiled(s->pm, xtk_trough_tile(), 0, 0, s->w, s->h);
-    fill_outline(s->pm, sb->vertical ? v : h, 5);
+    fill_outline(s->pm, sb->vertical ? v : h, 5, true);
     xtk_surface_present(s);
 }
 
@@ -77,11 +80,11 @@ static void draw_arrow(struct part *pt, char dir)
     XPoint up[4]    = { { 0, 8 }, { 4, 0 }, { 8, 8 }, { 0, 8 } };
     XPoint down[4]  = { { 8, 0 }, { 4, 8 }, { 0, 0 }, { 8, 0 } };
     XPoint left[4]  = { { 8, 0 }, { 0, 4 }, { 8, 8 }, { 8, 0 } };
-    XPoint right[4] = { { 0, 8 }, { 8, 4 }, { 0, 0 }, { 0, 8 } };
+    XPoint right[4] = { { 0, 0 }, { 8, 4 }, { 0, 8 }, { 0, 0 } };
     XPoint *p = dir == 'u' ? up : dir == 'd' ? down : dir == 'l' ? left : right;
 
     xtk_fill_tiled(pt->surf.pm, xtk_trough_tile(), 0, 0, pt->surf.w, pt->surf.h);
-    fill_outline(pt->surf.pm, p, 4);
+    fill_outline(pt->surf.pm, p, 4, true);
     xtk_surface_present(&pt->surf);
 }
 
@@ -125,6 +128,11 @@ void xtk_scrollbar_place(xtk_scrollbar *sb, int parent_w, int parent_h)
     XMoveWindow(dpy, sb->down.win, xtk_s(dx), xtk_s(dy));
     xtk_surface_resize(&sb->bar.surf, bw, bh);
     draw(sb);
+}
+
+void xtk_scrollbar_unmap(xtk_scrollbar *sb)
+{
+    XUnmapWindow(xtk_dpy(), sb->bar.win);
 }
 
 void xtk_scrollbar_map(xtk_scrollbar *sb)

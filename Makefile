@@ -12,16 +12,23 @@ PROG    := dbxl
 SRCS := \
 	src/main.c \
 	src/opts.c \
+	src/ui.c \
+	src/core/commandlist.c \
 	src/core/layout.c \
-	src/panes/commands.c \
+	src/core/options.c \
+	src/core/resources.c \
+	src/xtk/chip.c \
+	src/xtk/dialog.c \
 	src/xtk/display.c \
 	src/xtk/frame.c \
-	src/xtk/pane.c \
-	src/xtk/chip.c \
-	src/xtk/scrollbar.c \
-	src/xtk/surface.c \
+	src/xtk/gesture.c \
 	src/xtk/glyphs.c \
-	src/xtk/loop.c
+	src/xtk/lineedit.c \
+	src/xtk/loop.c \
+	src/xtk/menu.c \
+	src/xtk/pane.c \
+	src/xtk/scrollbar.c \
+	src/xtk/surface.c
 
 OBJS := $(SRCS:%.c=$(BUILD)/%.o)
 DEPS := $(OBJS:.o=.d)

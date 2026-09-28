@@ -1,19 +1,20 @@
 /*
- * Command-line options.  Milestone 1 handles the options that affect the
- * window; the rest of xldb's option set (DESIGN.md 3) follows with the
- * features they control.
+ * Command-line options (xldb's set, DESIGN.md 3); the options for features
+ * not implemented yet are added with those features.
  */
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "opts.h"
+#include "xtk/xtk.h"
 
 static void usage(void)
 {
     fprintf(stderr,
-            "usage: dbxl [-display Display] [-font Font] [-geometry Geometry]\n"
-            "            [-scale auto|1|2|3|4] [-title Title]\n"
+            "usage: dbxl [-display Display] [-name Name] [-font Font]\n"
+            "            [-geometry Geometry] [-title Title]\n"
+            "            [-bg Color] [-fg Color] [-bw] [-wb]\n"
+            "            [-scale auto|1|2|3|4]\n"
             "            [Program [ProgramArgument...]]\n");
 }
 
@@ -22,12 +23,20 @@ int dbxl_opts_parse(struct dbxl_opts *o, int argc, char **argv)
     int i;
 
     memset(o, 0, sizeof *o);
-    o->font = "8x13";
-    o->scale = 1;
+    o->scheme = -1;
+    o->scale = -1;
     for (i = 1; i < argc && argv[i][0] == '-'; i++) {
         const char *a = argv[i];
         const char **dst = NULL;
 
+        if (strcmp(a, "-bw") == 0) {
+            o->scheme = XTK_SCHEME_BW;          /* the later of -bw/-wb wins */
+            continue;
+        }
+        if (strcmp(a, "-wb") == 0) {
+            o->scheme = XTK_SCHEME_WB;
+            continue;
+        }
         if (strcmp(a, "-scale") == 0) {
             const char *v = ++i < argc ? argv[i] : NULL;
             if (v && strcmp(v, "auto") == 0) {
@@ -43,12 +52,18 @@ int dbxl_opts_parse(struct dbxl_opts *o, int argc, char **argv)
         }
         if (strcmp(a, "-display") == 0)
             dst = &o->display;
+        else if (strcmp(a, "-name") == 0)
+            dst = &o->name;
         else if (strcmp(a, "-font") == 0)
             dst = &o->font;
         else if (strcmp(a, "-geometry") == 0)
             dst = &o->geometry;
         else if (strcmp(a, "-title") == 0)
             dst = &o->title;
+        else if (strcmp(a, "-bg") == 0)
+            dst = &o->bg;
+        else if (strcmp(a, "-fg") == 0)
+            dst = &o->fg;
         else {
             fprintf(stderr, "dbxl: unknown option %s\n", a);
             usage();
