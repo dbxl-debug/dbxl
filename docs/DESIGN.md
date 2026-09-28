@@ -279,9 +279,27 @@ All observed *[obs p2-p5]*. These are the rules the value formatter must reprodu
 | Locals title | `Locals for main() in test.c`; `Locals for [unknown]()` when none |
 | Source title | the path as found: `./test.c` |
 
-**Linux/x86-64 adaptations (decisions needed, §12):** addresses are 64-bit, and registers and
-disassembly are x86-64, not POWER. The column structure is kept and widths grow as needed
-(proposal: `%08x` when the address fits in 32 bits, otherwise `%016x`).
+**Address width follows the target's pointer size** (decided 2026-09-27). xldb 1.2.1.0 only
+ever debugged 32-bit programs (no XCOFF64 support in the binary or help), so there is no xldb
+64-bit format to copy:
+- **32-bit targets:** xldb's formats exactly (`%08x`/`%08X`, `0x%08x`).
+- **64-bit targets:** the same formats and columns with 16-digit fields (`%016x`/`%016X`,
+  `0x%016x`). Columns to the right shift accordingly. With `8x13` this still fits the default
+  Storage (73 of ~74 columns) and Registers (25 of ~25 columns) widths.
+- The width is a per-session property from the backend (`sizeof(void *)` in the target), never
+  hard-coded. All formatters take it as a parameter.
+- **Disassembly keeps xldb's default geometry (567x440)** on every target. On 64-bit targets
+  the operand column starts at column 39 instead of 31, and long x86 operands are cut off and
+  scrolled horizontally. Widening the default for 64-bit targets is a possible later
+  enhancement (§14).
+
+**32-bit targets are a planned feature** even if the first version only ships x86-64. Nothing
+may assume 64-bit pointers, registers or addresses: use `uint64_t` for storage, the session's
+pointer size for formatting and memory reads, and per-architecture register tables. A 32-bit
+build of the recon test programs (`gcc -m32`) doubles as a fidelity check, since its address
+formats should match the AIX captures exactly.
+
+Registers and disassembly are the host architecture's (x86-64 first), not POWER.
 
 ## 7. Backend interface (backend/backend.h)
 
@@ -428,7 +446,8 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
 
 ## 12. Open questions
 1. ~~Mono-scheme glyphs~~ **Decided** (2026-09-27): derive them from the scheme colours, see §11.
-2. Address width in Disassembly/Storage on 64-bit targets (proposal in §6).
+2. ~~Address width~~ **Decided** (2026-09-27): follows the target pointer size, see §6. 32-bit
+   targets are planned for a later version.
 3. x86-64 register groups: which registers are "general", "special" and "double"?
 4. Missing measurements: mono border and scrollbar colours, the resize edge margin, the conditional stop
    sign glyph, the busy pointer, the Formats window, Signal, `-q`, core files.
@@ -458,3 +477,10 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
    Subprograms, Threads, Help (own text), Options menu, Save layout, Save Window.
 6. **Hardening:** core files, attach, signals, deferred breakpoints, `commandList` actions,
    sample layouts. Then evaluate an LLDB backend.
+
+**Later enhancements (not scheduled):**
+- **32-bit targets** (i386 via `gcc -m32` first). The design already requires pointer-size
+  independence (§6). This mostly adds register tables and tests.
+- **Wider default Disassembly on 64-bit targets,** so x86-64 operands fit without horizontal
+  scrolling. Only if the fixed 567px proves painful in practice.
+- **LLDB backend** via `lldb-dap` (§7.4).
