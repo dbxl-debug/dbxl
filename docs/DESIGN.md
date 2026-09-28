@@ -137,7 +137,7 @@ C11, `-Wall -Wextra -Wpedantic -Werror` in CI builds, no global mutable state ou
 
 Observed in *[obs p1, p3, p5]*; this is the part the specs got most wrong.
 
-- **Frame:** one top-level `InputOutput` window, default `957x846+33+73`. `WM_NAME "dbxl <prog>"`
+- **Frame:** one top-level `InputOutput` window, default `957x846+33+73`, with a 2px X border (black; white under `-wb`). `WM_NAME "dbxl <prog>"`
   (or `-title`), `WM_ICON_NAME "dbxl"`, USPosition/USSize, min size 64x64, icon pixmap = bug
   icon. Background = the 4x4 stipple tile (white/`#4876ff`):
   ```
@@ -160,9 +160,14 @@ Observed in *[obs p1, p3, p5]*; this is the part the specs got most wrong.
   frame children stacked on top.
 - **Gestures** (pointer handling shared by all panes, implemented in `pane.c`):
   - left click/drag: pane-specific action. Drag without an object hit = proportional scroll.
-  - right press near the centre -> **move**. Near an edge or corner (within a margin to be
-    measured, provisionally 1/4 of the smaller dimension) -> **resize** those edges. Both draw a
-    1px XOR `0xA5A5A5` rubber band (§5.1) and apply on release.
+  - right press -> the pane's inside is split into a **3x3 grid by thirds** *[obs p9]*: the
+    centre cell **moves**, side cells **resize that edge**, corner cells **resize both edges**.
+    (Horizontal centre `w/3 <= x <= 2w/3`, vertical `h/3 < y <= 2h/3`.) dbxl grabs the pointer
+    confined to the frame and draws the outline as 4 XOR segments (`0xA5A5A5`,
+    IncludeInferiors) on the frame, covering the pane's outer box. In resize mode the edge stays
+    put until the pointer reaches it, then follows the pointer exactly. On release it applies
+    the geometry and raises the pane. xldb's one-motion-event lag is **not** reproduced (it's a
+    bug that's invisible with a real mouse).
   - left click on title bar -> Window Control menu.
 - **Window Control menu** (`cellmenu`): title `Window Control` + `Restore, Move, Size, Minimize,
   Maximize, Lower, Horizontal scroll bars, Vertical scroll bars, Save Window`. It opens at the
@@ -186,8 +191,8 @@ Observed in *[obs p1, p3, p5]*; this is the part the specs got most wrong.
 | foreground | `#ffffff` | black | white |
 | titleBackground / chip / menu title | `#0000cd` | black | white |
 | titleForeground | `#ffffff` | white | black |
-| borderActive | `#ffffff` | ? | ? |
-| borderIdle | `#000000` | ? | ? |
+| borderActive | `#ffffff` | black (no active indicator) | white (no active indicator) |
+| borderIdle | `#000000` | black | white |
 | selection bar (current frame, selected entry, caller line) | `#00ffff` bg, black text | black bg, white text | white bg, black text |
 | menu item under pointer / default item | `#000000` bg, white text | black bg, white text | white bg, black text |
 | menu cells | `#4876ff`, white text, black borders | white, black text, black borders | black, white text, white borders |
@@ -205,7 +210,7 @@ Observed in *[obs p1, p3, p5]*; this is the part the specs got most wrong.
 | rubber band | XOR `0xA5A5A5` | ? | ? |
 
 `?`/TBD = not yet measured. Mono-scheme values are from *[obs p7]*. The resource names from the xldb help are all supported. Note the help's
-`RoyalBlue` is wrong: xldb actually renders `#4876ff`. The default must be the literal RGB,
+`RoyalBlue` is wrong: xldb allocates the literal RGB `#4876ff` (as it does `#fa1340`, `#d0d0d0` and `#5151fb`) and only `Cyan`, `MediumBlue` and `LightBlue` by name *[obs p9]*. The default must be the literal RGB,
 not the colour name, because `RoyalBlue` is `#4169e1` in every modern `rgb.txt`.
 
 ### 5.2 Font and metrics
@@ -475,10 +480,22 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
 2. ~~Address width~~ **Decided** (2026-09-27): follows the target pointer size, see §6. 32-bit
    targets are planned for a later version.
 3. ~~x86-64 register groups~~ **Decided** (2026-09-27): see §6.1.
-4. Missing measurements: mono border and scrollbar colours, the resize edge margin, the conditional stop
-   sign glyph, the busy pointer, the Formats window, Signal, `-q`, core files.
-5. Does "Size" from the Window Control menu start an outline immediately (help text), or wait
-   for a press? Recon didn't confirm it.
+4. **Remaining recon, by milestone** (details in `recon/xldb-observed.md`):
+
+   | Item | Status | Needed by |
+   |---|---|---|
+   | Mono border and scrollbar colours | **done** *[obs p8]* (see below) | M2 |
+   | Size from the Window Control menu | **done** *[obs p8]*: sizing mode, press+drag moves edges on the pointer's side by the drag delta, release applies | M2 |
+   | Right-drag move/resize zones | **done** *[obs p9]*: 3x3 thirds grid (see §4) | M2 |
+   | Exact bitmaps (pointer, busy cursor, bug icon, glyphs) | open: capture PutImage data with a byte-level proxy (`socat -x`) *[obs p9]* | M2 |
+   | Busy pointer | partly: a 16x16 bitmap cursor with hotspot (7,2) is created at startup *[obs p9]*. Needs a capture while running | M3 |
+   | Conditional stop sign, Formats window | open | M5 |
+   | Signal command, `-q`, core files (`-co`) | open | M6 |
+
+   Mono-scheme results: pane borders are black in `-bw` and white in `-wb` whether active or
+   idle. The frame's 2px border is black (default, `-bw`) or white (`-wb`). Scrollbar thumbs are
+   solid black, and arrow outlines black with the trough showing through.
+5. ~~Size from the Window Control menu~~ **Resolved** *[obs p8]*, see item 4.
 
 ## 13. Testing
 - **Unit** (`make test`): MI parser against captured GDB transcripts, formatter against the
