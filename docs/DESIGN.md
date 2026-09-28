@@ -410,6 +410,12 @@ Events (`dbg_event`): `STOPPED{reason, signal, bp id, frame}`, `RUNNING`, `EXITE
 `RESULT{token, payload}`, `ERROR{token, message}`, `OUTPUT{inferior|debugger text}`,
 `BP_CHANGED`, `LIBRARY_LOADED` (resolves deferred breakpoints).
 
+**Implemented so far** (`src/backend/backend.h`, milestone 3): start, shutdown, fd,
+readable, cont, next, step, step_insn, finish, restart, bp_line, bp_func, bp_delete and
+frames, with events RUNNING, STOPPED, EXITED, SIGNALLED, FRAMES, BP_SET, BP_DELETED, ERROR
+and DIED. The rest arrives with the panes that need it. `DBXL_GDB` overrides the gdb binary.
+The program runs on dbxl's terminal (or `/dev/null` without one), never on the MI pipes.
+
 **Values** are backend-neutral trees: `{id, name, kind, type_name, size, scalar(bytes or
 text), has_children}`. `kind` is `INT_SIGNED | INT_UNSIGNED | CHAR | FLOAT | ENUM | POINTER |
 ARRAY | STRUCT | UNION | FUNC | OTHER`. The formatter works from `kind` and raw scalars, never
@@ -450,7 +456,11 @@ async records).
 
 Each pane is a `textpane` (list of styled lines + hit-test) plus a click handler:
 - **Source:** left-click a line = toggle breakpoint (message `Cannot breakpoint line N of `F'`
-  when not possible). Glyphs in the left margin, drawn over the text. When stopped: scroll the
+  when not possible, including a line GDB would move the breakpoint from). On every stop the
+  view is re-centred (top = line - rows/2, at least the first line) *[obs p12]*. Vertical
+  thumb: fixed 12px at `13 + min(h-38, (h-39)*top/max(1, nlines-rows))`; the arrows scroll a
+  line *[obs p12]*. The Breakpoint dialog breaks at the function's first instruction (its `{`
+  line), silently. Glyphs in the left margin, drawn over the text. When stopped: scroll the
   line into view and raise Source. A selected caller frame's line is drawn as a full-width cyan
   bar. `:n`, `/x`, `\x`, `?x` via the inline LightBlue input strip at the pointer row. The match
   or line becomes the **pointer position** (warp), not a caret.
@@ -502,6 +512,9 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
 | "xldb" in every string | "dbxl" |
 | first Continue stops with SIGCONT (AIX/qemu artifact) | not reproduced |
 | stale fragments after dialogs close | full repaint |
+| a stop sign set by clicking is drawn twice, a line apart, until the line is redrawn *[obs p12]* | drawn once |
+| "N breakpoints set" counts machine addresses (3 on POWER for a `for` body line) | GDB's location count (normally `Breakpoint set`) |
+| AIX stepping (Step over a breakpointed call line stays put, Return from `main` runs on) | GDB's stepping |
 | mono schemes: all glyph fills black, so `-wb` hides the arrow and all breakpoints, and `-bw` makes enabled and disabled breakpoints identical *[obs p7]* | **decided**: in `-bw`/`-wb`, glyph colours come from the scheme. The arrow and enabled stop sign are filled with the foreground colour and outlined in the background colour. The disabled stop sign is a 1px foreground outline with the background showing through. The default colour scheme is unaffected and stays pixel-exact. |
 | POWER registers/disassembly | host architecture (x86-64 first) |
 | cannot debug dynamically linked programs on AIX 4.3 | not applicable |
@@ -530,8 +543,8 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
 5. ~~Size from the Window Control menu~~ **Resolved** *[obs p8]*, see item 4.
 
 ## 13. Testing
-- **Unit** (`make test`): MI parser against captured GDB transcripts, formatter against the
-  table in §6, commandList/resource parsing, search.
+- **Unit** (`make test`): MI parser (done), formatter against the table in §6,
+  commandList/resource parsing, search.
 - **Visual** (`make visual`): run dbxl under `Xvfb :43 -screen 0 1280x1024x24` with scripted
   xdotool interactions mirroring the recon scenarios (tests/progs ports of `test.c` and
   `rich.c`). Compare crops against `recon/screens/*` pixel by pixel, where content can match
@@ -546,8 +559,11 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
    move/resize, autoraise, pointer glyphs and warping, Messages, resources, `-bw`/`-wb`. Visual
    tests: a 33-step scenario recorded from xldb (also at scale 2), plus `-bw`, `-wb`,
    `tagWindows` and the messy sample layout.
-3. **GDB backend:** spawn, MI parser, run to main, Source + arrow + Commands (Continue, Next,
-   Step, Return, Machine step, Restart, Exit), Messages.
+3. **GDB backend** (done): spawn, MI parser, run to main, Source + arrow + stop signs +
+   scrolling, Commands (Continue, Next, Step, Return, Machine step, Restart, Edit, Exit),
+   breakpoints from Source clicks and the Breakpoint dialog, a basic Callers list, Messages.
+   Visual test: a 15-step scenario recorded from xldb (also at scale 2); the steps where GDB and
+   AIX step differently compare with reviewed dbxl captures. Recon pass 12.
 4. **Data panes:** Locals, Globals, Monitor with formatter and the list-style variable menus
    (moved here from milestone 2, since they need variables to compare against xldb). Callers,
    frame selection, the compact Edit dialog.

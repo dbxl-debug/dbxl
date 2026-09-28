@@ -25,6 +25,9 @@ struct xtk_scrollbar {
     struct part bar;
     struct part up, down;    /* left/right for a horizontal bar */
     bool vertical;
+    int thumb;               /* thumb's leading edge along the bar */
+    xtk_scrollbar_fn fn;
+    void *arg;
 };
 
 static void make_part(struct part *pt, Window parent, int w, int h, int border)
@@ -58,12 +61,8 @@ static void fill_outline(Drawable d, XPoint *pts, int n, bool fill)
 
 static void draw_bar(xtk_scrollbar *sb)
 {
-    /*
-     * Empty or fully visible content: xldb draws the thumb from 13 to 25
-     * (just below the arrow).  Proportional thumbs arrive with content
-     * scrolling in a later milestone.
-     */
-    int a = 13, b = 25;
+    /* A fixed 12px thumb; at the top it spans 13..25 (recon pass 12). */
+    int a = sb->thumb, b = sb->thumb + 12;
     XPoint v[5] = { { -1, (short)a }, { 28, (short)a }, { 28, (short)b },
                     { -1, (short)b }, { -1, (short)a } };
     XPoint h[5] = { { (short)a, -1 }, { (short)b, -1 }, { (short)b, 28 },
@@ -101,6 +100,7 @@ xtk_scrollbar *xtk_scrollbar_create(Window parent, bool vertical)
     xtk_scrollbar *sb = calloc(1, sizeof *sb);
 
     sb->vertical = vertical;
+    sb->thumb = 13;
     make_part(&sb->bar, parent, 16, 16, m->border);
     make_part(&sb->up, sb->bar.win, m->sb_w, m->sb_w, 0);
     make_part(&sb->down, sb->bar.win, m->sb_w, m->sb_w, 0);
@@ -142,6 +142,21 @@ void xtk_scrollbar_map(xtk_scrollbar *sb)
     XMapWindow(xtk_dpy(), sb->bar.win);
 }
 
+void xtk_scrollbar_set_handler(xtk_scrollbar *sb, xtk_scrollbar_fn fn,
+                               void *arg)
+{
+    sb->fn = fn;
+    sb->arg = arg;
+}
+
+void xtk_scrollbar_set_thumb(xtk_scrollbar *sb, int pos)
+{
+    if (pos == sb->thumb)
+        return;
+    sb->thumb = pos;
+    draw_bar(sb);
+}
+
 bool xtk_scrollbar_handle_event(xtk_scrollbar *sb, const XEvent *ev)
 {
     struct part *pt;
@@ -157,5 +172,9 @@ bool xtk_scrollbar_handle_event(xtk_scrollbar *sb, const XEvent *ev)
         return false;
     if (ev->type == Expose && ev->xexpose.count == 0)
         xtk_surface_present(&pt->surf);
+    /* The arrows scroll by one line (recon pass 12). */
+    if (ev->type == ButtonPress && ev->xbutton.button == Button1 && sb->fn &&
+        pt != &sb->bar)
+        sb->fn(sb, pt == &sb->up ? -1 : 1, sb->arg);
     return true;
 }

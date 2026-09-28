@@ -14,6 +14,9 @@ struct dbxl_opts {
     const char *bg, *fg;     /* -bg, -fg */
     int scheme;              /* -1 unset, else enum xtk_scheme (-bw, -wb) */
     int scale;               /* -1 unset, 0 = auto, 1-4 */
+    const char *edit;        /* -E: edit command */
+    const char *include[32]; /* -I: source directories */
+    int ninclude;
     const char *program;     /* program to debug */
     int prog_argc;           /* its arguments */
     char **prog_argv;

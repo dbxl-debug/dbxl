@@ -1,3 +1,6 @@
 *.swp
 /build/
 /dbxl
+/tests/progs/test
+/tests/progs/rich
+__pycache__/

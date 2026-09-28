@@ -12,6 +12,7 @@
 #include "core/layout.h"
 #include "core/options.h"
 #include "core/resources.h"
+#include "debugger.h"
 #include "ui.h"
 #include "xtk/xtk.h"
 
@@ -75,6 +76,19 @@ static void open_window(int i)
 {
     xtk_chip_unmap(ui.w[i].chip);
     xtk_pane_map(ui.w[i].pane);
+}
+
+xtk_pane *dbxl_ui_pane(int window)
+{
+    return ui.w[window].pane;
+}
+
+void dbxl_ui_show_window(int window)
+{
+    if (xtk_pane_mapped(ui.w[window].pane))
+        xtk_pane_raise(ui.w[window].pane);
+    else
+        open_window(window);
 }
 
 static void minimize_window(int i)
@@ -280,10 +294,9 @@ static void exit_done(int button, const char *text, void *arg)
 
 static void breakpoint_done(int button, const char *text, void *arg)
 {
-    (void)button;
-    (void)text;
     (void)arg;
-    /* Setting breakpoints needs the debugger backend (milestone 3). */
+    if (button == 0)
+        dbxl_debug_break_function(text);
 }
 
 static void run_command(const struct dbxl_command *c, int ax, int ay)
@@ -306,8 +319,17 @@ static void run_command(const struct dbxl_command *c, int ax, int ay)
     case ACT_HELP:
         open_window(DBXL_W_HELP);
         break;
+    case ACT_CONTINUE:
+    case ACT_NEXT:
+    case ACT_STEP:
+    case ACT_MACHINE_STEP:
+    case ACT_RETURN:
+    case ACT_RESTART:
+    case ACT_EDIT:
+        dbxl_debug_command(c->action);
+        break;
     default:
-        /* Execution commands need the debugger backend (milestone 3). */
+        /* Signal and subprogram calls: milestone 6. */
         break;
     }
 }
@@ -341,10 +363,12 @@ static void pane_event(xtk_pane *p, const xtk_pane_event *e, void *arg)
             break;
         if (i == DBXL_W_COMMANDS && e->row >= 0 && e->row < ui.ncmd) {
             run_command(&ui.cmd[e->row], e->fx, e->fy);
+        } else if (i == DBXL_W_SOURCE && dbxl_debug_active()) {
+            dbxl_debug_source_click(e->line + 1);
         } else if (i == DBXL_W_SOURCE) {
-            /* No program yet: xldb's message for a line it can't break on. */
+            /* No program: xldb's message for a line it can't break on. */
             snprintf(msg, sizeof msg, "Cannot breakpoint line %d of `'",
-                     e->row + 1);
+                     e->line + 1);
             dbxl_ui_message(msg);
         } else if (i == DBXL_W_GLOBALS || i == DBXL_W_MONITOR) {
             dbxl_ui_message("Click on a data object.");

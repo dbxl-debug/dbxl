@@ -153,6 +153,7 @@ typedef struct xtk_pane_event {
     int button;
     int x, y, fx, fy;
     int row, col;            /* content row/column (0-based) */
+    int line;                /* row + the pane's top line */
     unsigned long keysym;
     unsigned int state;      /* modifier mask of key/button events */
     const char *text;
@@ -168,7 +169,13 @@ void xtk_pane_set_lines(xtk_pane *p, const char *const *lines, int n);
 int xtk_pane_nlines(const xtk_pane *p);
 const char *xtk_pane_line(const xtk_pane *p, int i);
 int xtk_pane_rows(const xtk_pane *p);                    /* visible rows */
-void xtk_pane_set_selected(xtk_pane *p, int line);
+void xtk_pane_set_selected(xtk_pane *p, int line);       /* -1 = none */
+/* Scrolling: the first visible line (0-based). */
+void xtk_pane_set_top(xtk_pane *p, int top);
+int xtk_pane_top(const xtk_pane *p);
+/* Margin glyphs per line: stop sign or disabled stop sign, then the arrow. */
+enum { XTK_MARK_STOP = 1, XTK_MARK_STOP_DISABLED = 2, XTK_MARK_ARROW = 4 };
+void xtk_pane_set_marks(xtk_pane *p, const unsigned char *marks, int n);
 void xtk_pane_map(xtk_pane *p);
 void xtk_pane_unmap(xtk_pane *p);
 bool xtk_pane_mapped(const xtk_pane *p);
@@ -204,6 +211,12 @@ xtk_scrollbar *xtk_scrollbar_create(Window parent, bool vertical);
 void xtk_scrollbar_place(xtk_scrollbar *sb, int parent_w, int parent_h);
 void xtk_scrollbar_map(xtk_scrollbar *sb);
 void xtk_scrollbar_unmap(xtk_scrollbar *sb);
+/* Arrow clicks: dir -1 (up/left) or +1 (down/right). */
+typedef void (*xtk_scrollbar_fn)(xtk_scrollbar *sb, int dir, void *arg);
+void xtk_scrollbar_set_handler(xtk_scrollbar *sb, xtk_scrollbar_fn fn,
+                               void *arg);
+/* The thumb's leading edge in bar coordinates (13 at the start). */
+void xtk_scrollbar_set_thumb(xtk_scrollbar *sb, int pos);
 bool xtk_scrollbar_handle_event(xtk_scrollbar *sb, const XEvent *ev);
 
 /*
@@ -284,6 +297,10 @@ void xtk_glyph_draw(Drawable d, enum xtk_glyph g, int line_top);
 /* loop.c */
 typedef bool (*xtk_event_fn)(const XEvent *ev, void *arg);
 void xtk_loop_add_handler(xtk_event_fn fn, void *arg);
+typedef void (*xtk_fd_fn)(int fd, void *arg);
+/* Watch a descriptor: fn runs when it is readable (or hung up). */
+void xtk_loop_add_fd(int fd, xtk_fd_fn fn, void *arg);
+void xtk_loop_remove_fd(int fd);
 int xtk_loop_run(void);
 void xtk_loop_quit(int status);
 

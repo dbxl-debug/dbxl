@@ -14,7 +14,7 @@ static void usage(void)
             "usage: dbxl [-display Display] [-name Name] [-font Font]\n"
             "            [-geometry Geometry] [-title Title]\n"
             "            [-bg Color] [-fg Color] [-bw] [-wb]\n"
-            "            [-scale auto|1|2|3|4]\n"
+            "            [-scale auto|1|2|3|4] [-E Command] [-I Directory]\n"
             "            [Program [ProgramArgument...]]\n");
 }
 
@@ -50,6 +50,16 @@ int dbxl_opts_parse(struct dbxl_opts *o, int argc, char **argv)
             }
             continue;
         }
+        if (strcmp(a, "-I") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "dbxl: option -I needs an argument\n");
+                usage();
+                return -1;
+            }
+            if (o->ninclude < (int)(sizeof o->include / sizeof o->include[0]))
+                o->include[o->ninclude++] = argv[i];
+            continue;
+        }
         if (strcmp(a, "-display") == 0)
             dst = &o->display;
         else if (strcmp(a, "-name") == 0)
@@ -64,6 +74,8 @@ int dbxl_opts_parse(struct dbxl_opts *o, int argc, char **argv)
             dst = &o->bg;
         else if (strcmp(a, "-fg") == 0)
             dst = &o->fg;
+        else if (strcmp(a, "-E") == 0)
+            dst = &o->edit;
         else {
             fprintf(stderr, "dbxl: unknown option %s\n", a);
             usage();

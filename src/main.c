@@ -8,6 +8,7 @@
 #include "core/layout.h"
 #include "core/options.h"
 #include "core/resources.h"
+#include "debugger.h"
 #include "opts.h"
 #include "ui.h"
 #include "xtk/xtk.h"
@@ -79,6 +80,7 @@ int main(int argc, char **argv)
 {
     struct dbxl_opts o;
     struct dbxl_ui_config ucfg;
+    struct dbxl_debug_config dcfg;
     xtk_config cfg;
     char title[256];
     const char *geometry;
@@ -142,7 +144,19 @@ int main(int argc, char **argv)
     xtk_loop_add_handler(close_event, NULL);
 
     XMapWindow(xtk_dpy(), xtk_frame());
+
+    memset(&dcfg, 0, sizeof dcfg);
+    dcfg.program = o.program;
+    dcfg.argc = o.prog_argc;
+    dcfg.argv = o.prog_argv;
+    dcfg.run_to = dbxl_res_str("runTo");
+    dcfg.edit = o.edit ? o.edit : dbxl_res_str("edit");
+    dcfg.include = o.include;
+    dcfg.ninclude = o.ninclude;
+    dbxl_debug_init(&dcfg);
+
     status = xtk_loop_run();
+    dbxl_debug_shutdown();
     dbxl_res_free();
     xtk_close();
     return status;

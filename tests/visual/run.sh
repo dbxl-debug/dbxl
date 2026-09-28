@@ -130,6 +130,39 @@ else
 fi
 kill "$dbxl" 2>/dev/null || true; wait "$dbxl" 2>/dev/null || true; dbxl=
 
+# --- milestone 3 scenario: debugging tests/progs/test under GDB ---------
+# Run from the program's directory so its source is "./test.c", as in the
+# xldb recording.  Compared with xldb where GDB stops at the same places
+# and with reviewed dbxl captures elsewhere (see m3_compare.py).
+m3() {   # display scale outdir
+    d=$1; n=$2; o=$3
+    DISPLAY=$d python3 -c "
+from Xlib import display
+d = display.Display(); d.screen().root.warp_pointer($((640 * n)), $((512 * n))); d.sync()"
+    (cd "$top/tests/progs" && DISPLAY=$d exec "$top/dbxl" -scale "$n" ./test) \
+        >"$o.log" 2>&1 &
+    dbxl=$!
+    i=0
+    until DISPLAY=$d xwininfo -name "dbxl test" >/dev/null 2>&1; do
+        i=$((i + 1)); [ $i -gt 50 ] && { echo "dbxl ./test did not appear"; exit 1; }
+        sleep 0.1
+    done
+    sleep 2                              # GDB runs the program to main
+    rm -rf "$o"
+    mkdir -p "$o"
+    if python3 "$top/tests/visual/scenario_m3.py" "$d" "$o" --wait 1 --scale "$n" \
+            >"$o/scenario.log" 2>&1 &&
+       python3 "$top/tests/visual/m3_compare.py" "$o" "$ref" "$o" "$n"; then
+        :
+    else
+        echo "  FAIL (see $o)"
+        fail=1
+    fi
+    kill "$dbxl" 2>/dev/null || true; wait "$dbxl" 2>/dev/null || true; dbxl=
+}
+echo "milestone 3 scenario:"
+m3 "$disp" 1 "$out/m3"
+
 # --- startup at scales 2-4: must equal the reference enlarged NxN ---------
 # The frame's logical geometry is multiplied by N, so it is at (33N, 73N).
 # The pointer is placed at logical (640,512), inside Source, as at scale 1.
@@ -203,5 +236,8 @@ else
     fail=1
 fi
 kill "$dbxl" 2>/dev/null || true; wait "$dbxl" 2>/dev/null || true; dbxl=
+
+echo "milestone 3 scenario -scale 2:"
+m3 "$big" 2 "$out/m3-x2"
 
 exit $fail

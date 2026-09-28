@@ -42,7 +42,10 @@ struct xtk_pane {
     xtk_rect geom;
     char **lines;
     int nlines;
-    int selected;                /* -1 = none */
+    int selected;                /* line index, -1 = none */
+    int top;                     /* first visible line */
+    unsigned char *marks;        /* margin glyphs per line */
+    int nmarks;
     xtk_scrollbar *vsb, *hsb;
     int scrollbars;
     bool mapped;
@@ -54,6 +57,7 @@ struct xtk_pane {
 static bool autoraise = true;
 
 static void redraw(xtk_pane *p);
+static void scrolled(xtk_scrollbar *sb, int dir, void *arg);
 
 xtk_pane *xtk_pane_create(const char *title, xtk_rect geom, int scrollbars)
 {
@@ -84,6 +88,7 @@ xtk_pane *xtk_pane_create(const char *title, xtk_rect geom, int scrollbars)
      */
     p->vsb = xtk_scrollbar_create(p->win, true);
     p->hsb = xtk_scrollbar_create(p->win, false);
+    xtk_scrollbar_set_handler(p->vsb, scrolled, p);
     xtk_pane_set_scrollbars(p, scrollbars);
     return p;
 }
@@ -139,6 +144,60 @@ void xtk_pane_set_selected(xtk_pane *p, int line)
 {
     p->selected = line;
     redraw(p);
+}
+
+int xtk_pane_top(const xtk_pane *p) { return p->top; }
+
+void xtk_pane_set_top(xtk_pane *p, int top)
+{
+    p->top = top > 0 ? top : 0;
+    redraw(p);
+}
+
+void xtk_pane_set_marks(xtk_pane *p, const unsigned char *marks, int n)
+{
+    free(p->marks);
+    p->marks = NULL;
+    p->nmarks = 0;
+    if (n > 0) {
+        p->marks = malloc((size_t)n);
+        memcpy(p->marks, marks, (size_t)n);
+        p->nmarks = n;
+    }
+    redraw(p);
+}
+
+/*
+ * The arrows scroll by a line.  Down stops once the last page is reached;
+ * a view that a stop centred further down stays put (recon pass 12).
+ */
+static void scrolled(xtk_scrollbar *sb, int dir, void *arg)
+{
+    xtk_pane *p = arg;
+
+    (void)sb;
+    if (dir < 0 && p->top > 0)
+        xtk_pane_set_top(p, p->top - 1);
+    else if (dir > 0 && p->top < p->nlines - xtk_pane_rows(p))
+        xtk_pane_set_top(p, p->top + 1);
+}
+
+/*
+ * xldb's thumb: a fixed 12px thumb whose top moves from 13 over the bar's
+ * length less 38, in steps of (length - 39) / range, where range is the
+ * number of lines beyond one page (at least 1).  Measured with 21 and 49
+ * line files in a 420px pane (recon pass 12).
+ */
+static int thumb_pos(const xtk_pane *p)
+{
+    int track = p->geom.h - 38;
+    int range = p->nlines - xtk_pane_rows(p);
+    long pos;
+
+    if (range < 1)
+        range = 1;
+    pos = (long)(track - 1) * p->top / range;
+    return 13 + (int)(pos < track ? pos : track);
 }
 
 void xtk_pane_map(xtk_pane *p)
@@ -219,16 +278,31 @@ static void redraw(xtk_pane *p)
     xtk_fill(d, XTK_BG, 0, 0, w, h);
     for (int i = 0; i < rows; i++) {
         int y = top + i * m->line_h;
+        int line = p->top + i;
         enum xtk_color fg = XTK_FG;
 
-        if (i == p->selected) {
+        if (line == p->selected) {
             xtk_fill(d, XTK_SELECT_BG, 0, y, w, m->line_h);
             fg = XTK_SELECT_FG;
         }
-        pad(buf, cols, i < p->nlines ? p->lines[i] : NULL);
+        pad(buf, cols, line < p->nlines ? p->lines[line] : NULL);
         xtk_draw_text(d, fg, 0, y + m->ascent, buf, cols);
     }
     free(buf);
+    /* Margin glyphs go over the text: stop signs, then the arrow. */
+    for (int pass = 0; pass < 2; pass++)
+        for (int i = 0; i < rows; i++) {
+            int line = p->top + i;
+            int mk = line < p->nmarks ? p->marks[line] : 0;
+            int y = top + i * m->line_h;
+
+            if (pass == 0 && (mk & XTK_MARK_STOP))
+                xtk_glyph_draw(d, XTK_GLYPH_STOP, y);
+            else if (pass == 0 && (mk & XTK_MARK_STOP_DISABLED))
+                xtk_glyph_draw(d, XTK_GLYPH_STOP_DISABLED, y);
+            else if (pass == 1 && (mk & XTK_MARK_ARROW))
+                xtk_glyph_draw(d, XTK_GLYPH_ARROW, y);
+        }
 
     xtk_fill(d, XTK_TITLE_BG, 0, 0, w, m->title_h);
     xtk_draw_text(d, XTK_TITLE_FG, (w - tlen * m->char_w) / 2,
@@ -246,6 +320,7 @@ static void redraw(xtk_pane *p)
         }
     }
     xtk_surface_present(&p->surf);
+    xtk_scrollbar_set_thumb(p->vsb, thumb_pos(p));
 }
 
 static void set_active(xtk_pane *p, bool active)
@@ -350,7 +425,7 @@ static void key(xtk_pane *p, const XKeyEvent *kev, int x, int y, int fx, int fy)
     case XK_Right: warp_cell(p, row, col + 1); return;
     case XK_Home:  warp_cell(p, row, 0); return;
     case XK_End: {
-        int len = (int)strlen(xtk_pane_line(p, row));
+        int len = (int)strlen(xtk_pane_line(p, p->top + row));
         warp_cell(p, row, len > 0 ? len - 1 : 0);
         return;
     }
@@ -431,6 +506,7 @@ bool xtk_pane_handle_event(xtk_pane *p, const XEvent *ev)
                 e.type = XTK_PANE_CLICK;
                 e.row = (y - (m->title_h + 1)) / m->line_h;
                 e.col = x / m->char_w;
+                e.line = p->top + e.row;
             }
             p->fn(p, &e, p->arg);
         }
