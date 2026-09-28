@@ -33,12 +33,18 @@ static bool handle_event(const XEvent *ev, void *arg)
     return false;
 }
 
-static xtk_rect frame_geometry(const char *spec)
+/*
+ * The frame geometry in logical pixels.  Negative offsets count from the
+ * right/bottom of the screen measured in logical pixels, so -geometry means
+ * the same layout at every scale.  With no display yet (screen_w == 0) only
+ * the size is resolved.
+ */
+static xtk_rect frame_geometry(const char *spec, int screen_w, int screen_h)
 {
     xtk_rect g = dbxl_frame_geometry;
     int gx, gy;
     unsigned gw, gh;
-    int mask;
+    int mask, outer = 4;          /* 2px border on each side */
 
     if (!spec)
         return g;
@@ -48,13 +54,9 @@ static xtk_rect frame_geometry(const char *spec)
     if (mask & HeightValue)
         g.h = (int)gh;
     if (mask & XValue)
-        g.x = (mask & XNegative)
-            ? DisplayWidth(xtk_dpy(), DefaultScreen(xtk_dpy())) + gx - g.w - 4
-            : gx;
+        g.x = (mask & XNegative) ? screen_w + gx - g.w - outer : gx;
     if (mask & YValue)
-        g.y = (mask & YNegative)
-            ? DisplayHeight(xtk_dpy(), DefaultScreen(xtk_dpy())) + gy - g.h - 4
-            : gy;
+        g.y = (mask & YNegative) ? screen_h + gy - g.h - outer : gy;
     return g;
 }
 
@@ -62,12 +64,18 @@ int main(int argc, char **argv)
 {
     struct dbxl_opts o;
     char title[256];
-    int status;
+    xtk_rect geom;
+    int status, scr;
 
     if (dbxl_opts_parse(&o, argc, argv) < 0)
         return 255;
-    if (!xtk_open(o.display, o.font))
+    geom = frame_geometry(o.geometry, 0, 0);
+    if (!xtk_open(o.display, o.font, o.scale, geom.w + 4, geom.h + 4))
         return 1;
+    scr = DefaultScreen(xtk_dpy());
+    geom = frame_geometry(o.geometry,
+                          DisplayWidth(xtk_dpy(), scr) / xtk_scale(),
+                          DisplayHeight(xtk_dpy(), scr) / xtk_scale());
 
     if (o.title) {
         snprintf(title, sizeof title, "%s", o.title);
@@ -77,7 +85,7 @@ int main(int argc, char **argv)
     } else {
         snprintf(title, sizeof title, "dbxl");
     }
-    xtk_frame_create(frame_geometry(o.geometry), title, "dbxl", argc, argv);
+    xtk_frame_create(geom, title, "dbxl", argc, argv);
 
     for (int i = 0; i < DBXL_NWINDOWS; i++) {
         const struct dbxl_window_def *d = dbxl_window_def(i);

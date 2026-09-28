@@ -2,13 +2,17 @@
  * Display connection, colours, font, shared GC and background tiles.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <X11/Xresource.h>
+#include <X11/extensions/Xrender.h>
 
 #include "xtk/xtk.h"
 
 static struct {
     Display *dpy;
     int screen;
+    int scale;
     Window root;
     Colormap cmap;
     unsigned long pixel[XTK_NCOLORS];
@@ -53,22 +57,27 @@ static unsigned long alloc_rgb(unsigned int rgb)
     return c.pixel;
 }
 
-/* A 16x16 tile in the screen depth: white where pattern(px, py), else bg. */
-static Pixmap make_tile(bool (*pattern)(int, int))
+/*
+ * A 16x16 logical tile in the screen depth, enlarged by `scale`: white
+ * where pattern(px, py), else bg.
+ */
+static Pixmap make_tile(bool (*pattern)(int, int), int scale)
 {
-    Pixmap pm = XCreatePixmap(x.dpy, x.root, 16, 16,
+    unsigned n = (unsigned)(16 * scale);
+    Pixmap pm = XCreatePixmap(x.dpy, x.root, n, n,
                               (unsigned)DefaultDepth(x.dpy, x.screen));
     XGCValues v;
     GC gc;
 
     v.foreground = x.pixel[XTK_BG];
     gc = XCreateGC(x.dpy, pm, GCForeground, &v);
-    XFillRectangle(x.dpy, pm, gc, 0, 0, 16, 16);
+    XFillRectangle(x.dpy, pm, gc, 0, 0, n, n);
     XSetForeground(x.dpy, gc, x.pixel[XTK_FG]);
     for (int py = 0; py < 16; py++)
         for (int px = 0; px < 16; px++)
             if (pattern(px, py))
-                XDrawPoint(x.dpy, pm, gc, px, py);
+                XFillRectangle(x.dpy, pm, gc, px * scale, py * scale,
+                               (unsigned)scale, (unsigned)scale);
     XFreeGC(x.dpy, gc);
     return pm;
 }
@@ -96,7 +105,57 @@ static bool trough_pattern(int px, int py)
     return (px + py) % 2 == 0;
 }
 
-bool xtk_open(const char *display_name, const char *font_name)
+/* Dots per inch: the Xft.dpi resource if set, else the screen's size. */
+static double screen_dpi(void)
+{
+    const char *rm = XResourceManagerString(x.dpy);
+    int mm = DisplayWidthMM(x.dpy, x.screen);
+
+    if (rm) {
+        XrmDatabase db;
+        XrmInitialize();
+        db = XrmGetStringDatabase(rm);
+        char *type;
+        XrmValue val;
+        double dpi = 0;
+
+        if (XrmGetResource(db, "Xft.dpi", "Xft.Dpi", &type, &val) && val.addr)
+            dpi = atof(val.addr);
+        XrmDestroyDatabase(db);
+        if (dpi > 0)
+            return dpi;
+    }
+    return mm > 0 ? DisplayWidth(x.dpy, x.screen) * 25.4 / mm : 96.0;
+}
+
+/* scale 0 = auto: round(dpi / 96), then shrink until the frame fits. */
+static int choose_scale(int scale, int fit_w, int fit_h)
+{
+    int sw = DisplayWidth(x.dpy, x.screen);
+    int sh = DisplayHeight(x.dpy, x.screen);
+
+    if (scale == 0) {
+        scale = (int)(screen_dpi() / 96.0 + 0.5);
+        if (scale > 4)
+            scale = 4;
+        while (scale > 1 && (fit_w * scale > sw || fit_h * scale > sh))
+            scale--;
+    }
+    if (scale < 1)
+        scale = 1;
+    if (scale > 1) {
+        int ev, err;
+        if (!XRenderQueryExtension(x.dpy, &ev, &err)) {
+            fprintf(stderr, "dbxl: the X server lacks the RENDER extension; "
+                            "using -scale 1\n");
+            scale = 1;
+        }
+    }
+    return scale;
+}
+
+bool xtk_open(const char *display_name, const char *font_name,
+              int scale, int fit_w, int fit_h)
 {
     x.dpy = XOpenDisplay(display_name);
     if (!x.dpy) {
@@ -107,6 +166,7 @@ bool xtk_open(const char *display_name, const char *font_name)
     x.screen = DefaultScreen(x.dpy);
     x.root = RootWindow(x.dpy, x.screen);
     x.cmap = DefaultColormap(x.dpy, x.screen);
+    x.scale = choose_scale(scale, fit_w, fit_h);
 
     for (int i = 0; i < XTK_NCOLORS; i++)
         x.pixel[i] = alloc_rgb(default_rgb[i]);
@@ -137,8 +197,8 @@ bool xtk_open(const char *display_name, const char *font_name)
     v.graphics_exposures = False;
     x.gc = XCreateGC(x.dpy, x.root, GCFont | GCGraphicsExposures, &v);
 
-    x.frame_tile = make_tile(frame_pattern);
-    x.trough_tile = make_tile(trough_pattern);
+    x.frame_tile = make_tile(frame_pattern, x.scale);
+    x.trough_tile = make_tile(trough_pattern, 1);
     x.pointer = xtk_glyph_pointer_cursor();
     return true;
 }
@@ -157,6 +217,7 @@ void xtk_close(void)
 }
 
 Display *xtk_dpy(void) { return x.dpy; }
+int xtk_scale(void) { return x.scale; }
 Window xtk_root(void) { return x.root; }
 unsigned long xtk_pixel(enum xtk_color c) { return x.pixel[c]; }
 const xtk_metrics *xtk_metrics_get(void) { return &x.m; }
@@ -178,4 +239,15 @@ void xtk_fill(Drawable d, enum xtk_color c, int fx, int fy, int w, int h)
         return;
     XSetForeground(x.dpy, x.gc, x.pixel[c]);
     XFillRectangle(x.dpy, d, x.gc, fx, fy, (unsigned)w, (unsigned)h);
+}
+
+void xtk_fill_tiled(Drawable d, Pixmap tile, int fx, int fy, int w, int h)
+{
+    if (w <= 0 || h <= 0)
+        return;
+    XSetTile(x.dpy, x.gc, tile);
+    XSetTSOrigin(x.dpy, x.gc, 0, 0);
+    XSetFillStyle(x.dpy, x.gc, FillTiled);
+    XFillRectangle(x.dpy, d, x.gc, fx, fy, (unsigned)w, (unsigned)h);
+    XSetFillStyle(x.dpy, x.gc, FillSolid);
 }

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""xdiff.py GOT REF [--crop X,Y,W,H] [--mask X,Y,W,H ...] [--out DIFF.png]
+"""xdiff.py GOT REF [--crop X,Y,W,H] [--mask X,Y,W,H ...] [--ref-scale N]
+                 [--out DIFF.png]
 
 Compare two images pixel by pixel.  GOT is cropped with --crop (e.g. the
 frame's region of a full-screen capture) before comparison; masked
-rectangles (in REF coordinates) are ignored.  Prints the differing regions
-and writes a diff image (differences in red over a dimmed copy of GOT,
+rectangles (in REF coordinates) are ignored.  --ref-scale enlarges REF
+and the masks by N with nearest-neighbour sampling, to check scaled output
+against a 1x reference (the crop is given in GOT's coordinates).  Prints
+the differing regions and writes a diff image (differences in red over a dimmed copy of GOT,
 zoomed 2x) when --out is given.  Exit status 0 when identical, 1 otherwise.
 """
 import argparse
@@ -44,11 +47,16 @@ def main():
     ap.add_argument("ref")
     ap.add_argument("--crop", type=rect)
     ap.add_argument("--mask", type=rect, action="append", default=[])
+    ap.add_argument("--ref-scale", type=int, default=1)
     ap.add_argument("--out")
     a = ap.parse_args()
 
     got = Image.open(a.got).convert("RGB")
     ref = Image.open(a.ref).convert("RGB")
+    n = a.ref_scale
+    if n > 1:
+        ref = ref.resize((ref.width * n, ref.height * n), Image.NEAREST)
+        a.mask = [(x * n, y * n, w * n, h * n) for x, y, w, h in a.mask]
     if a.crop:
         x, y, w, h = a.crop
         got = got.crop((x, y, x + w, y + h))

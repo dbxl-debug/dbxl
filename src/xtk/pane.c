@@ -6,7 +6,9 @@
  * is filled with the background, each visible line is drawn as a full-width
  * space-padded string at baseline 24 + 13n, a selected line gets a 13px
  * Cyan bar with black text, and the title bar (0..11) is filled MediumBlue
- * with the title centred.  Row 12 is left as the window background.
+ * with the title centred.  Row 12 is left as the background colour (xldb
+ * leaves it to the window background).  Everything is drawn into a 1x
+ * backing surface and presented at the display scale.
  */
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +17,7 @@
 
 struct xtk_pane {
     Window win;
+    xtk_surface surf;
     char *title;
     int w, h;
     char **lines;
@@ -23,6 +26,8 @@ struct xtk_pane {
     xtk_scrollbar *vsb, *hsb;
     int scrollbars;
 };
+
+static void redraw(xtk_pane *p);
 
 xtk_pane *xtk_pane_create(const char *title, xtk_rect geom, int scrollbars)
 {
@@ -36,16 +41,17 @@ xtk_pane *xtk_pane_create(const char *title, xtk_rect geom, int scrollbars)
     p->selected = -1;
     p->scrollbars = scrollbars;
 
-    a.background_pixel = xtk_pixel(XTK_BG);
+    a.background_pixmap = None;
     a.border_pixel = xtk_pixel(XTK_BORDER_IDLE);
     a.event_mask = KeyPressMask | KeyReleaseMask | ButtonPressMask |
                    ButtonReleaseMask | EnterWindowMask | LeaveWindowMask |
                    ExposureMask | OwnerGrabButtonMask;
-    p->win = XCreateWindow(xtk_dpy(), xtk_frame(), geom.x, geom.y,
-                           (unsigned)geom.w, (unsigned)geom.h,
-                           (unsigned)m->border, CopyFromParent, InputOutput,
-                           CopyFromParent,
-                           CWBackPixel | CWBorderPixel | CWEventMask, &a);
+    p->win = XCreateWindow(xtk_dpy(), xtk_frame(), xtk_s(geom.x), xtk_s(geom.y),
+                           (unsigned)xtk_s(geom.w), (unsigned)xtk_s(geom.h),
+                           (unsigned)xtk_s(m->border), CopyFromParent,
+                           InputOutput, CopyFromParent,
+                           CWBackPixmap | CWBorderPixel | CWEventMask, &a);
+    xtk_surface_init(&p->surf, p->win, p->w, p->h);
 
     /* xldb creates both bars for every pane and maps only the enabled ones. */
     p->hsb = xtk_scrollbar_create(p->win, false);
@@ -58,10 +64,9 @@ xtk_pane *xtk_pane_create(const char *title, xtk_rect geom, int scrollbars)
         xtk_scrollbar_place(p->hsb, p->w, p->h);
         xtk_scrollbar_map(p->hsb);
     }
+    redraw(p);
     return p;
 }
-
-static void redraw(xtk_pane *p);
 
 void xtk_pane_set_title(xtk_pane *p, const char *title)
 {
@@ -118,29 +123,31 @@ static void pad(char *buf, int cols, const char *s)
 static void redraw(xtk_pane *p)
 {
     const xtk_metrics *m = xtk_metrics_get();
+    Drawable d = p->surf.pm;
     int top = m->title_h + 1;                    /* 13 */
     int cols = p->w / m->char_w;
     int rows = (p->h - top) / m->line_h;
     int tlen = (int)strlen(p->title);
     char *buf = malloc((size_t)cols + 1);
 
-    xtk_fill(p->win, XTK_BG, 0, top, p->w, p->h - top);
+    xtk_fill(d, XTK_BG, 0, 0, p->w, p->h);
     for (int i = 0; i < rows; i++) {
         int y = top + i * m->line_h;
         enum xtk_color fg = XTK_FG;
 
         if (i == p->selected) {
-            xtk_fill(p->win, XTK_SELECT_BG, 0, y, p->w, m->line_h);
+            xtk_fill(d, XTK_SELECT_BG, 0, y, p->w, m->line_h);
             fg = XTK_SELECT_FG;
         }
         pad(buf, cols, i < p->nlines ? p->lines[i] : NULL);
-        xtk_draw_text(p->win, fg, 0, y + m->ascent, buf, cols);
+        xtk_draw_text(d, fg, 0, y + m->ascent, buf, cols);
     }
     free(buf);
 
-    xtk_fill(p->win, XTK_TITLE_BG, 0, 0, p->w, m->title_h);
-    xtk_draw_text(p->win, XTK_TITLE_FG, (p->w - tlen * m->char_w) / 2,
+    xtk_fill(d, XTK_TITLE_BG, 0, 0, p->w, m->title_h);
+    xtk_draw_text(d, XTK_TITLE_FG, (p->w - tlen * m->char_w) / 2,
                   m->title_base, p->title, tlen);
+    xtk_surface_present(&p->surf);
 }
 
 static void set_active(xtk_pane *p, bool active)
@@ -160,7 +167,7 @@ bool xtk_pane_handle_event(xtk_pane *p, const XEvent *ev)
     switch (ev->type) {
     case Expose:
         if (ev->xexpose.count == 0)
-            redraw(p);
+            xtk_surface_present(&p->surf);
         break;
     case EnterNotify:
         set_active(p, true);

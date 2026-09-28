@@ -45,20 +45,47 @@ typedef struct xtk_metrics {
     int sb_w;           /* scrollbar interior width = 9 */
 } xtk_metrics;
 
-/* display.c */
-bool xtk_open(const char *display_name, const char *font_name);
+/*
+ * display.c
+ *
+ * Everything is laid out and drawn in xldb's pixel units ("logical"
+ * pixels) and shown enlarged by an integer scale factor (1-4) so it stays
+ * readable on high resolution screens.  scale 0 = auto: from the screen's
+ * DPI, reduced until a fit_w x fit_h frame fits on the screen.
+ */
+bool xtk_open(const char *display_name, const char *font_name,
+              int scale, int fit_w, int fit_h);
 void xtk_close(void);
+int xtk_scale(void);
+static inline int xtk_s(int logical) { return logical * xtk_scale(); }
 Display *xtk_dpy(void);
 Window xtk_root(void);
 unsigned long xtk_pixel(enum xtk_color c);
 const xtk_metrics *xtk_metrics_get(void);
 GC xtk_gc(void);                        /* scratch GC with the text font */
-Pixmap xtk_frame_tile(void);            /* 4x4 stipple, white on bg */
-Pixmap xtk_trough_tile(void);           /* 1x1 checkerboard, white on bg */
+Pixmap xtk_frame_tile(void);            /* 4x4 stipple, white on bg; scaled */
+Pixmap xtk_trough_tile(void);           /* 1x1 checkerboard, white on bg; 1x */
 Cursor xtk_pointer(void);               /* xldb's white arrow pointer */
 void xtk_draw_text(Drawable d, enum xtk_color fg, int x, int baseline,
                    const char *s, int len);
 void xtk_fill(Drawable d, enum xtk_color c, int x, int y, int w, int h);
+void xtk_fill_tiled(Drawable d, Pixmap tile, int x, int y, int w, int h);
+
+/*
+ * surface.c: a window's 1x backing pixmap.  Draw into `pm` in logical
+ * pixels, then present to copy it to the window enlarged by the scale.
+ */
+typedef struct xtk_surface {
+    Window win;
+    Pixmap pm;
+    int w, h;                    /* logical size */
+    unsigned long src_pict;      /* XRender Picture, 0 at scale 1 */
+    unsigned long dst_pict;
+} xtk_surface;
+void xtk_surface_init(xtk_surface *s, Window win, int w, int h);
+void xtk_surface_resize(xtk_surface *s, int w, int h);
+void xtk_surface_present(xtk_surface *s);
+void xtk_surface_free(xtk_surface *s);
 
 /* frame.c */
 Window xtk_frame_create(xtk_rect geom, const char *title,

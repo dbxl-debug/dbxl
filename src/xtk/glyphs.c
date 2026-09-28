@@ -1,6 +1,8 @@
 /*
  * Bitmaps recovered from xldb.
  */
+#include <stdlib.h>
+
 #include "xtk/xtk.h"
 
 /*
@@ -27,36 +29,42 @@ static const char *const pointer_rows[16] = {
     "......###.......",
 };
 
-/* Pack a 16x16 character picture into XBM bits, selecting chars in `set`. */
-static void pack(const char *const rows[16], const char *set, char bits[32])
+/*
+ * Build an XBM bitmap from a 16x16 character picture, selecting the chars
+ * in `set`, with every pixel enlarged to scale x scale.
+ */
+static Pixmap bitmap(const char *const rows[16], const char *set, int scale)
 {
-    for (int y = 0; y < 16; y++) {
-        unsigned v = 0;
-        for (int px = 0; px < 16; px++) {
-            char ch = rows[y][px];
+    int n = 16 * scale, stride = (n + 7) / 8;
+    char *bits = calloc((size_t)(stride * n), 1);
+    Pixmap pm;
+
+    for (int y = 0; y < n; y++)
+        for (int px = 0; px < n; px++) {
+            char ch = rows[y / scale][px / scale];
             for (const char *s = set; *s; s++)
                 if (ch == *s)
-                    v |= 1u << px;
+                    bits[y * stride + px / 8] |= (char)(1 << (px % 8));
         }
-        bits[y * 2] = (char)(v & 0xff);
-        bits[y * 2 + 1] = (char)(v >> 8);
-    }
+    pm = XCreateBitmapFromData(xtk_dpy(), xtk_root(), bits,
+                               (unsigned)n, (unsigned)n);
+    free(bits);
+    return pm;
 }
 
 Cursor xtk_glyph_pointer_cursor(void)
 {
     Display *dpy = xtk_dpy();
-    char src_bits[32], mask_bits[32];
-    Pixmap src, mask;
+    int scale = xtk_scale();
+    Pixmap src = bitmap(pointer_rows, "W", scale);
+    Pixmap mask = bitmap(pointer_rows, "W#", scale);
     XColor fg = { .red = 0xffff, .green = 0xffff, .blue = 0xffff };
     XColor bg = { .red = 0, .green = 0, .blue = 0 };
     Cursor c;
 
-    pack(pointer_rows, "W", src_bits);
-    pack(pointer_rows, "W#", mask_bits);
-    src = XCreateBitmapFromData(dpy, xtk_root(), src_bits, 16, 16);
-    mask = XCreateBitmapFromData(dpy, xtk_root(), mask_bits, 16, 16);
-    c = XCreatePixmapCursor(dpy, src, mask, &fg, &bg, 1, 1);
+    /* The hotspot is the top-left of the enlarged (1,1) pixel. */
+    c = XCreatePixmapCursor(dpy, src, mask, &fg, &bg,
+                            (unsigned)scale, (unsigned)scale);
     XFreePixmap(dpy, src);
     XFreePixmap(dpy, mask);
     return c;

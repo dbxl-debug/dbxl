@@ -15,64 +15,31 @@
 
 #include "xtk/xtk.h"
 
-struct xtk_scrollbar {
-    Window bar;
-    Window up, down;         /* left/right for a horizontal bar */
-    bool vertical;
-    int len;                 /* length of the bar along its axis */
+struct part {
+    Window win;
+    xtk_surface surf;
 };
 
-static Window make_window(Window parent, int w, int h, unsigned border)
+struct xtk_scrollbar {
+    struct part bar;
+    struct part up, down;    /* left/right for a horizontal bar */
+    bool vertical;
+};
+
+static void make_part(struct part *pt, Window parent, int w, int h, int border)
 {
     XSetWindowAttributes a;
 
-    a.background_pixmap = xtk_trough_tile();
+    a.background_pixmap = None;
     a.border_pixel = xtk_pixel(XTK_BORDER_IDLE);
     a.event_mask = ButtonPressMask | ButtonReleaseMask | EnterWindowMask |
                    LeaveWindowMask | ExposureMask | OwnerGrabButtonMask;
-    return XCreateWindow(xtk_dpy(), parent, 0, 0, (unsigned)w, (unsigned)h,
-                         border, CopyFromParent, InputOutput, CopyFromParent,
-                         CWBackPixmap | CWBorderPixel | CWEventMask, &a);
-}
-
-xtk_scrollbar *xtk_scrollbar_create(Window parent, bool vertical)
-{
-    const xtk_metrics *m = xtk_metrics_get();
-    xtk_scrollbar *sb = calloc(1, sizeof *sb);
-
-    sb->vertical = vertical;
-    sb->bar = make_window(parent, 16, 16, (unsigned)m->border);
-    sb->up = make_window(sb->bar, m->sb_w, m->sb_w, 0);
-    sb->down = make_window(sb->bar, m->sb_w, m->sb_w, 0);
-    return sb;
-}
-
-void xtk_scrollbar_place(xtk_scrollbar *sb, int parent_w, int parent_h)
-{
-    Display *dpy = xtk_dpy();
-    const xtk_metrics *m = xtk_metrics_get();
-    int inset = m->sb_w + m->border;             /* 11 */
-
-    if (sb->vertical) {
-        sb->len = parent_h;
-        XMoveResizeWindow(dpy, sb->bar, parent_w - inset, -m->border,
-                          (unsigned)m->sb_w, (unsigned)parent_h);
-        XMoveWindow(dpy, sb->up, 0, 0);
-        XMoveWindow(dpy, sb->down, 0, parent_h - m->sb_w);
-    } else {
-        sb->len = parent_w;
-        XMoveResizeWindow(dpy, sb->bar, -m->border, parent_h - inset,
-                          (unsigned)parent_w, (unsigned)m->sb_w);
-        XMoveWindow(dpy, sb->up, 0, 0);
-        XMoveWindow(dpy, sb->down, parent_w - m->sb_w, 0);
-    }
-}
-
-void xtk_scrollbar_map(xtk_scrollbar *sb)
-{
-    XMapWindow(xtk_dpy(), sb->up);
-    XMapWindow(xtk_dpy(), sb->down);
-    XMapWindow(xtk_dpy(), sb->bar);
+    pt->win = XCreateWindow(xtk_dpy(), parent, 0, 0,
+                            (unsigned)xtk_s(w), (unsigned)xtk_s(h),
+                            (unsigned)xtk_s(border), CopyFromParent,
+                            InputOutput, CopyFromParent,
+                            CWBackPixmap | CWBorderPixel | CWEventMask, &a);
+    xtk_surface_init(&pt->surf, pt->win, w, h);
 }
 
 static void fill_outline(Drawable d, XPoint *pts, int n)
@@ -86,7 +53,7 @@ static void fill_outline(Drawable d, XPoint *pts, int n)
     XDrawLines(dpy, d, gc, pts, n, CoordModeOrigin);
 }
 
-static void draw_thumb(xtk_scrollbar *sb)
+static void draw_bar(xtk_scrollbar *sb)
 {
     /*
      * Empty or fully visible content: xldb draws the thumb from 13 to 25
@@ -98,11 +65,14 @@ static void draw_thumb(xtk_scrollbar *sb)
                     { -1, (short)b }, { -1, (short)a } };
     XPoint h[5] = { { (short)a, -1 }, { (short)b, -1 }, { (short)b, 28 },
                     { (short)a, 28 }, { (short)a, -1 } };
+    xtk_surface *s = &sb->bar.surf;
 
-    fill_outline(sb->bar, sb->vertical ? v : h, 5);
+    xtk_fill_tiled(s->pm, xtk_trough_tile(), 0, 0, s->w, s->h);
+    fill_outline(s->pm, sb->vertical ? v : h, 5);
+    xtk_surface_present(s);
 }
 
-static void draw_arrow(Window w, char dir)
+static void draw_arrow(struct part *pt, char dir)
 {
     XPoint up[4]    = { { 0, 8 }, { 4, 0 }, { 8, 8 }, { 0, 8 } };
     XPoint down[4]  = { { 8, 0 }, { 4, 8 }, { 0, 0 }, { 8, 0 } };
@@ -110,22 +80,74 @@ static void draw_arrow(Window w, char dir)
     XPoint right[4] = { { 0, 8 }, { 8, 4 }, { 0, 0 }, { 0, 8 } };
     XPoint *p = dir == 'u' ? up : dir == 'd' ? down : dir == 'l' ? left : right;
 
-    fill_outline(w, p, 4);
+    xtk_fill_tiled(pt->surf.pm, xtk_trough_tile(), 0, 0, pt->surf.w, pt->surf.h);
+    fill_outline(pt->surf.pm, p, 4);
+    xtk_surface_present(&pt->surf);
+}
+
+static void draw(xtk_scrollbar *sb)
+{
+    draw_bar(sb);
+    draw_arrow(&sb->up, sb->vertical ? 'u' : 'l');
+    draw_arrow(&sb->down, sb->vertical ? 'd' : 'r');
+}
+
+xtk_scrollbar *xtk_scrollbar_create(Window parent, bool vertical)
+{
+    const xtk_metrics *m = xtk_metrics_get();
+    xtk_scrollbar *sb = calloc(1, sizeof *sb);
+
+    sb->vertical = vertical;
+    make_part(&sb->bar, parent, 16, 16, m->border);
+    make_part(&sb->up, sb->bar.win, m->sb_w, m->sb_w, 0);
+    make_part(&sb->down, sb->bar.win, m->sb_w, m->sb_w, 0);
+    draw(sb);
+    return sb;
+}
+
+void xtk_scrollbar_place(xtk_scrollbar *sb, int parent_w, int parent_h)
+{
+    Display *dpy = xtk_dpy();
+    const xtk_metrics *m = xtk_metrics_get();
+    int inset = m->sb_w + m->border;             /* 11 */
+    int bx, by, bw, bh, dx, dy;
+
+    if (sb->vertical) {
+        bx = parent_w - inset; by = -m->border; bw = m->sb_w; bh = parent_h;
+        dx = 0; dy = parent_h - m->sb_w;
+    } else {
+        bx = -m->border; by = parent_h - inset; bw = parent_w; bh = m->sb_w;
+        dx = parent_w - m->sb_w; dy = 0;
+    }
+    XMoveResizeWindow(dpy, sb->bar.win, xtk_s(bx), xtk_s(by),
+                      (unsigned)xtk_s(bw), (unsigned)xtk_s(bh));
+    XMoveWindow(dpy, sb->up.win, 0, 0);
+    XMoveWindow(dpy, sb->down.win, xtk_s(dx), xtk_s(dy));
+    xtk_surface_resize(&sb->bar.surf, bw, bh);
+    draw(sb);
+}
+
+void xtk_scrollbar_map(xtk_scrollbar *sb)
+{
+    XMapWindow(xtk_dpy(), sb->up.win);
+    XMapWindow(xtk_dpy(), sb->down.win);
+    XMapWindow(xtk_dpy(), sb->bar.win);
 }
 
 bool xtk_scrollbar_handle_event(xtk_scrollbar *sb, const XEvent *ev)
 {
+    struct part *pt;
     Window w = ev->xany.window;
 
-    if (w != sb->bar && w != sb->up && w != sb->down)
+    if (w == sb->bar.win)
+        pt = &sb->bar;
+    else if (w == sb->up.win)
+        pt = &sb->up;
+    else if (w == sb->down.win)
+        pt = &sb->down;
+    else
         return false;
-    if (ev->type == Expose && ev->xexpose.count == 0) {
-        if (w == sb->bar)
-            draw_thumb(sb);
-        else if (w == sb->up)
-            draw_arrow(w, sb->vertical ? 'u' : 'l');
-        else
-            draw_arrow(w, sb->vertical ? 'd' : 'r');
-    }
+    if (ev->type == Expose && ev->xexpose.count == 0)
+        xtk_surface_present(&pt->surf);
     return true;
 }

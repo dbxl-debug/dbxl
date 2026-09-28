@@ -1,5 +1,6 @@
 /*
  * The single top-level frame that holds every pane (recon pass 1).
+ * Geometry is given in logical pixels and enlarged by the scale.
  */
 #include <X11/Xutil.h>
 
@@ -20,9 +21,9 @@ Window xtk_frame_create(xtk_rect geom, const char *title,
     a.border_pixel = xtk_pixel(XTK_BORDER_IDLE);
     a.cursor = xtk_pointer();
     a.event_mask = StructureNotifyMask;
-    frame = XCreateWindow(dpy, xtk_root(), geom.x, geom.y,
-                          (unsigned)geom.w, (unsigned)geom.h,
-                          (unsigned)xtk_metrics_get()->border,
+    frame = XCreateWindow(dpy, xtk_root(), xtk_s(geom.x), xtk_s(geom.y),
+                          (unsigned)xtk_s(geom.w), (unsigned)xtk_s(geom.h),
+                          (unsigned)xtk_s(xtk_metrics_get()->border),
                           CopyFromParent, InputOutput, CopyFromParent,
                           CWBackPixmap | CWBorderPixel | CWCursor | CWEventMask,
                           &a);
@@ -33,12 +34,12 @@ Window xtk_frame_create(xtk_rect geom, const char *title,
 
     size = XAllocSizeHints();
     size->flags = USPosition | USSize | PMinSize;
-    size->x = geom.x;
-    size->y = geom.y;
-    size->width = geom.w;
-    size->height = geom.h;
-    size->min_width = 64;
-    size->min_height = 64;
+    size->x = xtk_s(geom.x);
+    size->y = xtk_s(geom.y);
+    size->width = xtk_s(geom.w);
+    size->height = xtk_s(geom.h);
+    size->min_width = xtk_s(64);
+    size->min_height = xtk_s(64);
     XSetWMNormalHints(dpy, frame, size);
     XFree(size);
 

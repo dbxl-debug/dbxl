@@ -222,6 +222,25 @@ not the colour name, because `RoyalBlue` is `#4169e1` in every modern `rgb.txt`.
   height, menu cell height = 19 with `8x13`: to be confirmed as a formula).
 - No antialiasing anywhere. Text is drawn with `XDrawImageString`/`XDrawString` core fonts.
 
+### 5.2a Integer display scaling (decided 2026-09-27)
+`-scale auto|1|2|3|4` (default 1, and later a `dbxl.scale` resource) enlarges everything by
+an exact integer factor for high resolution screens:
+- All layout and drawing stay in xldb's pixel units ("logical" pixels). Each window draws
+  into a 1x backing pixmap (`xtk/surface.c`), which is presented with `XCopyArea` at scale 1,
+  or at scale N through an XRender composite with a divide-by-N projective transform and
+  nearest-neighbour filtering. Each logical pixel becomes an exact NxN block. This adds a
+  dependency on libXrender.
+- X window geometry, border widths, the frame tile and the pointer bitmap (32x32 at 2x) are
+  multiplied by N. Pointer coordinates will be divided by N when input handling arrives.
+  Rubber-band outlines, which XRender can't XOR, are drawn directly on the frame with N-wide
+  lines.
+- Geometries from `-geometry` and resources stay in 1x units, so layouts and xldb's sample
+  configurations mean the same at every scale.
+- `auto` uses `round(dpi / 96)` (dpi from `Xft.dpi`, else the screen size) capped at 4,
+  then reduced until the frame fits the screen. The default 957x846 frame fits 4K only at 2x.
+- Tests: scale 1 is compared with the xldb captures, and scales 2-4 with the same captures
+  enlarged by nearest-neighbour.
+
 ### 5.3 Default geometries (from the xldb binary; frame-relative)
 
 | Window | Geometry | Scrollbars | Icon (chip) |
