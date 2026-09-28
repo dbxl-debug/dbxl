@@ -4,7 +4,8 @@
 plain `Makefile`, and GDB/MI underneath.
 
 **Source of truth:** the real xldb, observed on AIX 4.3.3 and recorded in
-`../recon/xldb-observed.md` (passes 1-6) with screenshots in `../recon/screens/`. Where that
+`../recon/xldb-observed.md` (passes 1-17) with screenshots in `../recon/screens/` and the
+`../recon/pNN/` capture folders. How to run and record it: `docs/RECON.md`. Where that
 document and the older reverse-engineered specs (`xldb-ui-reconstruction-spec.md`,
 `xldb-visual-archaeology.md`) or IBM's own help text disagree, **the observed behaviour wins**.
 Section references like *[obs p3]* point at the pass in that document.
