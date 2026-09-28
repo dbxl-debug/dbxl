@@ -184,23 +184,27 @@ Observed in *[obs p1, p3, p5]*; this is the part the specs got most wrong.
 |---|---|---|---|
 | background | `#4876ff` (X `RoyalBlue1`) | white | black |
 | foreground | `#ffffff` | black | white |
-| titleBackground / chip / dialog background | `#0000cd` | black | white |
+| titleBackground / chip / menu title | `#0000cd` | black | white |
 | titleForeground | `#ffffff` | white | black |
 | borderActive | `#ffffff` | ? | ? |
-| borderIdle | `#000000` | black | ? |
-| selection bar (current frame, current style) | `#00ffff` bg, black text | black bg, white text | white bg, black text |
-| menu item under pointer / default item | `#000000` bg, white text | inverted | inverted |
+| borderIdle | `#000000` | ? | ? |
+| selection bar (current frame, selected entry, caller line) | `#00ffff` bg, black text | black bg, white text | white bg, black text |
+| menu item under pointer / default item | `#000000` bg, white text | black bg, white text | white bg, black text |
+| menu cells | `#4876ff`, white text, black borders | white, black text, black borders | black, white text, white borders |
 | menuInfo (`Style:` headers) | `#d0d0d0` | black | white |
-| dialog field | `#add8e6` | ? | ? |
-| cursorForeground (input cursor box) | `#fa1340` outline | ? | ? |
-| stop sign fill | `#fa1340` | ? | ? |
-| scroll thumb / arrow fill | `#5151fb` | ? | ? |
-| arrow/disabled-stop outline | `#000001` | | |
-| arrow fill | `#000000` | | |
-| rubber band | XOR `0xA5A5A5` | | |
+| dialog background / text | `#0000cd` / white | black / white | white / black |
+| dialog border, button edge | white | black | white |
+| dialog buttons | `#4876ff`, white text | white, black text | black, white text |
+| dialog field | `#add8e6` | black (= dialog bg) | white (= dialog bg) |
+| cursorForeground (input cursor box) | `#fa1340` outline | white outline | black outline |
+| stop sign fill | `#fa1340` | black (xldb) -> **foreground** (dbxl, §11) | black (xldb) -> **foreground** (dbxl) |
+| disabled stop sign fill | pane background | black (xldb) -> **background** (dbxl) | black (xldb) -> **background** (dbxl) |
+| scroll thumb / arrow fill | `#5151fb` | black or white (TBD) | black or white (TBD) |
+| glyph outline (arrow, stop signs) | `#000001` | `#000001` (xldb) -> background (dbxl) | `#000001` (xldb) -> background (dbxl); disabled uses foreground |
+| arrow fill | `#000000` | `#000000` (= foreground) | `#000000` (xldb) -> **foreground** (dbxl) |
+| rubber band | XOR `0xA5A5A5` | ? | ? |
 
-`?` = not yet measured; capture from `recon/screens/110-bw.png`/`111-wb.png` during
-implementation. The resource names from the xldb help are all supported. Note the help's
+`?`/TBD = not yet measured. Mono-scheme values are from *[obs p7]*. The resource names from the xldb help are all supported. Note the help's
 `RoyalBlue` is wrong: xldb actually renders `#4876ff`. The default must be the literal RGB,
 not the colour name, because `RoyalBlue` is `#4169e1` in every modern `rgb.txt`.
 
@@ -418,15 +422,15 @@ behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
 | "xldb" in every string | "dbxl" |
 | first Continue stops with SIGCONT (AIX/qemu artifact) | not reproduced |
 | stale fragments after dialogs close | full repaint |
-| `-wb` execution arrow invisible (black on black) | **open question**: faithful or fixed |
+| mono schemes: all glyph fills black, so `-wb` hides the arrow and all breakpoints, and `-bw` makes enabled and disabled breakpoints identical *[obs p7]* | **decided**: in `-bw`/`-wb`, glyph colours come from the scheme. The arrow and enabled stop sign are filled with the foreground colour and outlined in the background colour. The disabled stop sign is a 1px foreground outline with the background showing through. The default colour scheme is unaffected and stays pixel-exact. |
 | POWER registers/disassembly | host architecture (x86-64 first) |
 | cannot debug dynamically linked programs on AIX 4.3 | not applicable |
 
 ## 12. Open questions
-1. `-wb` arrow: reproduce the invisible arrow, or draw it in the foreground colour?
+1. ~~Mono-scheme glyphs~~ **Decided** (2026-09-27): derive them from the scheme colours, see §11.
 2. Address width in Disassembly/Storage on 64-bit targets (proposal in §6).
 3. x86-64 register groups: which registers are "general", "special" and "double"?
-4. Missing measurements: `-bw`/`-wb` role colours, the resize edge margin, the conditional stop
+4. Missing measurements: mono border and scrollbar colours, the resize edge margin, the conditional stop
    sign glyph, the busy pointer, the Formats window, Signal, `-q`, core files.
 5. Does "Size" from the Window Control menu start an outline immediately (help text), or wait
    for a press? Recon didn't confirm it.
