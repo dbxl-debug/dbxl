@@ -22,6 +22,25 @@ from Xlib.ext import xtest
 FRAME_X, FRAME_Y = 35, 75          # frame inside origin (root), border 2
 
 
+def settled_grab(disp, interval=0.25, timeout=10.0):
+    """A screenshot of a screen that has stopped changing.
+
+    The capture is another X client: on a busy machine (a CI runner) the
+    server can serve it between the requests of a redraw that is still
+    under way.  Grab until two grabs in a row are the same, or give up
+    after `timeout` seconds and return the last one.
+    """
+    prev = ImageGrab.grab(xdisplay=disp)
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        time.sleep(interval)
+        cur = ImageGrab.grab(xdisplay=disp)
+        if cur.tobytes() == prev.tobytes():
+            return cur
+        prev = cur
+    return prev
+
+
 def pane_outer(fx, fy):
     """Root position of a pane's outer (border) corner from frame coords."""
     return FRAME_X + fx, FRAME_Y + fy
@@ -73,7 +92,7 @@ class Driver:
 
     def shot(self, name):
         time.sleep(self.wait)
-        ImageGrab.grab(xdisplay=self.disp).save(os.path.join(self.outdir, name + ".png"))
+        settled_grab(self.disp).save(os.path.join(self.outdir, name + ".png"))
         print("captured", name, flush=True)
 
 
