@@ -11,7 +11,10 @@ out=${VISUAL_OUT:-$top/build/visual}
 disp=${VISUAL_DISPLAY:-:98}
 mkdir -p "$out"
 
-Xvfb "$disp" -screen 0 1280x1024x24 -nolisten tcp >"$out/xvfb.log" 2>&1 &
+# -noreset: by default Xvfb resets when its last client leaves, and a
+# dbxl started right after the previous one is killed can then fail with
+# "cannot open display".
+Xvfb "$disp" -screen 0 1280x1024x24 -nolisten tcp -noreset >"$out/xvfb.log" 2>&1 &
 xvfb=$!
 dbxl=
 cleanup() {
@@ -321,7 +324,7 @@ m8 "$disp" 1 "$out/m8"
 # The frame's logical geometry is multiplied by N, so it is at (33N, 73N).
 # The pointer is placed at logical (640,512), inside Source, as at scale 1.
 big=${VISUAL_BIG_DISPLAY:-:97}
-Xvfb "$big" -screen 0 4096x3840x24 -nolisten tcp >"$out/xvfb-big.log" 2>&1 &
+Xvfb "$big" -screen 0 4096x3840x24 -nolisten tcp -noreset >"$out/xvfb-big.log" 2>&1 &
 xvfb_big=$!
 trap 'cleanup; kill $xvfb_big 2>/dev/null || true' EXIT INT TERM
 i=0
