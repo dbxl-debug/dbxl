@@ -40,7 +40,7 @@ until DISPLAY=$disp xwininfo -name dbxl >/dev/null 2>&1; do
     sleep 0.1
 done
 sleep 1
-python3 -c "from PIL import ImageGrab; ImageGrab.grab(xdisplay='$disp').save('$out/startup.png')"
+PYTHONPATH="$top/tests/visual" python3 -c "from scenario import settled_grab; settled_grab('$disp').save('$out/startup.png')"
 
 # Masks (reference coordinates) for content that needs a running program:
 #   the selected __start() line in Callers, the execution arrow in Source.
@@ -85,7 +85,7 @@ d = display.Display()
 d.screen().root.warp_pointer(0, 0); d.sync(); time.sleep(0.3)
 d.screen().root.warp_pointer(640, 512); d.sync()"
     sleep 1
-    python3 -c "from PIL import ImageGrab; ImageGrab.grab(xdisplay='$disp').save('$out/config-$name.png')"
+    PYTHONPATH="$top/tests/visual" python3 -c "from scenario import settled_grab; settled_grab('$disp').save('$out/config-$name.png')"
     echo "config $name:"
     # shellcheck disable=SC2086
     if python3 "$top/tools/xdiff.py" "$out/config-$name.png" "$ref/config/$name.png" \
@@ -349,7 +349,7 @@ time.sleep(0.3)
 d.screen().root.warp_pointer($((640 * n)), $((512 * n)))
 d.sync()"
     sleep 1
-    python3 -c "from PIL import ImageGrab; ImageGrab.grab(xdisplay='$big').save('$out/startup-x$n.png')"
+    PYTHONPATH="$top/tests/visual" python3 -c "from scenario import settled_grab; settled_grab('$big').save('$out/startup-x$n.png')"
     kill "$dbxl"; wait "$dbxl" 2>/dev/null || true; dbxl=
     echo "startup -scale $n:"
     if python3 "$top/tools/xdiff.py" "$out/startup-x$n.png" "$ref/xldb-startup.png" \
