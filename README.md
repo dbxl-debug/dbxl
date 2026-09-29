@@ -5,6 +5,9 @@ with plain Xlib, with GDB/MI as the debugger backend.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the design and the milestones.
 
+![dbxl stopped at a breakpoint in tests/progs/rich, with a pointer
+expanded in the Locals window](docs/screenshot.png)
+
 ## Prereqs
 
 On Debian based systems:
