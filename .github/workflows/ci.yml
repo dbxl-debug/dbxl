@@ -1,0 +1,58 @@
+# Build dbxl and run the whole test suite: the unit tests (make test) and
+# the visual tests (make visual), which drive dbxl on a private Xvfb under
+# GDB and compare its windows with the xldb references pixel for pixel.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          # build: Xlib and XRender; tests: GDB with Python, Xvfb, the
+          # 8x13 core font (xfonts-base), xwininfo, Pillow, python-xlib
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libx11-dev libxrender-dev \
+            gdb xvfb xfonts-base x11-utils python3 python3-pil python3-xlib
+
+      - name: Show tool versions
+        run: |
+          cc --version | head -1
+          gdb --version | head -1
+          python3 -c 'import PIL, Xlib; print("Pillow", PIL.__version__)'
+
+      - name: Build
+        run: make
+
+      - name: Unit tests
+        run: make test
+
+      - name: Visual tests
+        run: make visual
+
+      - name: Keep the visual test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-output
+          path: build/visual/
+          retention-days: 14
