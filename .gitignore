@@ -10,3 +10,6 @@ __pycache__/
 /tests/progs/aix/*.o
 /tests/progs/aix/test
 /tests/progs/aix/rich
+# IBM text regenerated on the guest for recon; not for the repository (docs/RECON.md)
+/docs/recon/xldb-h.txt
+/docs/recon/xldb-messages.txt

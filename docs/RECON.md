@@ -2,11 +2,14 @@
 
 dbxl copies IBM's `xldb` 1.2.1.0, and the real program is the reference: what it does
 overrides any spec. This file collects the practical tips for running and recording it.
-Findings go in `../recon/xldb-observed.md` (one "Recon pass N" section per session), and
+Findings go in `docs/recon/xldb-observed.md` (one "Recon pass N" section per session), and
 decisions go in `DESIGN.md` §11 and §12.
 
-Paths below are relative to the reference folder (the parent of this repository), which
-holds `recon/`, `AIX.md` and the install media.
+Paths below are relative to the top of this repository. The recon tools are in
+`tools/recon/`. What isn't kept in the repository stays in a reference folder next to it
+(historically `../recon/`):
+- the screenshots, the recorded captures and the X traces (evidence, several MB);
+- IBM's own text, which isn't ours to publish (see below).
 
 ## The AIX guest
 
@@ -18,13 +21,12 @@ holds `recon/`, `AIX.md` and the install media.
 - The test programs are **hand-written PowerPC assembly** with XCOFF stabs, in this
   repository's `tests/progs/aix/`: `test.s` and `rich.s` mirror `tests/progs/test.c` and
   `rich.c`, the programs dbxl's tests debug on Linux. Copy them to the guest with
-  `recon/tools/push.py LOCAL REMOTE...` and build them there (from the reference folder,
-  with the repository checked out as `dbxl-debugger/`):
+  `tools/recon/push.py LOCAL REMOTE...` and build them there:
 
   ```
-  a=dbxl-debugger/tests/progs/aix
-  recon/tools/push.py $a/test.s test.s $a/rich.s rich.s $a/build.sh build.sh
-  recon/tools/aix.py 'sh build.sh'
+  a=tests/progs/aix
+  tools/recon/push.py $a/test.s test.s $a/rich.s rich.s $a/build.sh build.sh
+  tools/recon/aix.py 'sh build.sh'
   ```
 
   `build.sh` links statically (`-bnso`), because xldb can't load AIX 4.3's shared-library
@@ -32,6 +34,21 @@ holds `recon/`, `AIX.md` and the install media.
   older recon passes ran the static `test.s` build as `./tests`; it is now `./test`.)
 - Root is needed for system settings. We don't log in as root; ask the user to run the
   command.
+
+### IBM's text (not in the repository)
+
+xldb's help text and message catalogue are IBM's, so they are regenerated on the guest when
+needed rather than committed. Save them under `docs/recon/` (both names are ignored by git):
+
+```
+tools/recon/aix.py 'xldb -h' | tail -n +2 > docs/recon/xldb-h.txt
+tools/recon/aix.py "strings /usr/lpp/xldb/bin/xldb | grep '^M_'" | tail -n +2 \
+    > docs/recon/xldb-messages.txt
+```
+
+(`tail` drops the command line `aix.py` echoes.) The notes cite them as `xldb-h.txt` (the
+help, for behaviour the emulator can't show) and `xldb-messages.txt` (every message dbxl
+copies).
 
 ### System settings for core files
 
@@ -75,7 +92,7 @@ The guest draws on a host Xvfb, which has no window manager:
 ```
 Xvfb :42 -screen 0 1280x1024x24 -listen tcp -ac -nolisten unix
 xtrace -d 127.0.0.1:42 -D 0.0.0.0:43 -n -k -o TRACE.log        # X protocol log
-recon/tools/rawproxy.py 6045 127.0.0.1 6043 RAWDIR             # raw bytes, :45 -> :43
+tools/recon/rawproxy.py 6045 127.0.0.1 6043 RAWDIR             # raw bytes, :45 -> :43
 ```
 
 Point xldb at **`:45`** (raw proxy → xtrace → Xvfb) to get both logs, `:43` for the xtrace
@@ -88,28 +105,29 @@ log alone, or `:42` for neither. Captures are always taken from `:42`.
   - `WarpPointer` shows where the pointer is sent;
   - `Bell` records beeps;
   - `ChangeGC` gives colours.
-- `recon/tools/panetext.py TRACE START [TITLE]` replays the `PolyText8` requests and prints
+- `tools/recon/panetext.py TRACE START [TITLE]` replays the `PolyText8` requests and prints
   every pane's current title and rows.
 - xtrace doesn't print image data. For bitmaps, decode the raw log with
-  `recon/tools/putimages.py RAWDIR/conn-N`. Every glyph, cursor and icon is already in
-  `recon/xtrace/bitmaps-decoded.txt`.
+  `tools/recon/putimages.py RAWDIR/conn-N`. Every glyph, cursor and icon is already in
+  `docs/recon/bitmaps-decoded.txt`.
 - Grep the trace from the last `ButtonPress` at a known `root-x=… root-y=…` to see exactly
   what one click did.
 
 ## Driving xldb
 
-- **Launch:** `recon/tools/xl.sh ARGS...` kills any xldb on the guest, removes
+- **Launch:** `tools/recon/xl.sh ARGS...` kills any xldb on the guest, removes
   `~/.xldb.rich`, and starts `xldb ARGS` in `~` on `:45`. `PRE='cmds'` runs guest commands
   first, e.g. `PRE='rm -f ~/core'`. By hand:
   `DISPLAY=192.168.76.1:45 nohup xldb ./rich > /tmp/xl.out 2>&1 &`. If the window doesn't
   appear, read `/tmp/xl.out`: xldb writes startup errors to stderr and exits 1.
-- **Guest commands:** `recon/tools/aix.py 'cmd' ...` runs ksh commands over telnet and
-  prints their output. Output lines end in `\r`, so strip that before reusing a value such as
-  a PID.
-- **Recording:** `recon/tools/rec.py LOG OUTDIR click X Y [B] | move X Y | key K | type T |
-  wait S | shot NAME ...` drives `:42`, saves shots, and appends every action to a JSONL log.
-  `recon/tools/replay.py LOG DISPLAY OUTDIR [--skip N]` replays the log against dbxl.
-  `recon/tools/shot.py NAME [action...]` is the older capture-only tool.
+- **Guest commands:** `tools/recon/aix.py 'cmd' ...` runs ksh commands over telnet
+  and prints their output. Output lines end in `\r`, so strip that before reusing a value
+  such as a PID. `AIX_HOST`, `AIX_USER` and `AIX_PASSWORD` override the guest and login.
+- **Recording:** `tools/recon/rec.py LOG OUTDIR click X Y [B] | move X Y | key K |
+  type T | wait S | shot NAME ...` drives `:42`, saves shots, and appends every action to a
+  JSONL log.
+  `tools/recon/replay.py LOG DISPLAY OUTDIR [--skip N]` replays the log against dbxl.
+  `tools/recon/shot.py NAME [action...]` is the older capture-only tool.
 - **Visual-test scenarios** (`tests/visual/scenario_m*.py DISPLAY OUTDIR --wait 3 --xldb`)
   run against `:42` produce the reference captures. Crop them to the frame (33,73)-(992,921)
   for `tests/visual/ref/`.
@@ -149,9 +167,10 @@ log alone, or `:42` for neither. Captures are always taken from `:42`.
 1. Check the guest: telnet works and `ps -ef | grep xldb` shows what's running.
 2. Check the host chain is up (`pgrep -a Xvfb`, `xtrace`, `rawproxy`), and note the current
    trace line so the pass's traffic can be found.
-3. Launch with `xl.sh`, record with `rec.py` into `recon/pNN/`, and read results from the
-   trace.
+3. Launch with `xl.sh`, record with `rec.py` into `../recon/pNN/` (outside the
+   repository), and read results from the trace.
 4. Clean up the guest: kill xldb and test processes, remove `~/.Xdefaults` and scratch
    files, and restore any changed settings.
-5. Write the findings as "Recon pass N" in `recon/xldb-observed.md`, marking what couldn't
-   be observed. Then update `DESIGN.md` (§11 deviations, §12 recon table, §14 milestones).
+5. Write the findings as "Recon pass N" in `docs/recon/xldb-observed.md`, marking what
+   couldn't be observed. Then update `DESIGN.md` (§11 deviations, §12 recon table, §14
+   milestones).
