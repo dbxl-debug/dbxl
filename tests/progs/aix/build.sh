@@ -6,7 +6,7 @@
 #
 # There is no C compiler on the guest; these mimic `xlc -g` output
 # (XCOFF stabs), following the rules xldb needs (recon passes 2 and 4 in
-# recon/xldb-observed.md).  Needs bos.adt.base (as) and bos.adt.syscalls
+# docs/recon/xldb-observed.md).  Needs bos.adt.base (as) and bos.adt.syscalls
 # (/usr/lib/syscalls.exp).
 #
 # Linked statically (-bnso): xldb 1.2.1 can't load AIX 4.3's shared

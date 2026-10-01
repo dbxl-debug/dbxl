@@ -6,7 +6,7 @@
  * down (top = line - rows/2, at least the first line), whether or not it
  * was already visible; the Callers pane lists the stack as "func()" with
  * the current frame highlighted; the Locals title names the function and
- * file.  Messages come from xldb's catalogue (recon/xldb-messages.txt).
+ * file.  Messages come from xldb's catalogue (see docs/RECON.md).
  */
 #include <fcntl.h>
 #include <signal.h>

@@ -1,7 +1,7 @@
 /*
  * Values typed into Edit (and trigger) dialogs, read in the object's
  * display style as xldb's help describes, with xldb's hints and range
- * messages (recon pass 15, recon/xldb-messages.txt).
+ * messages (recon pass 15; the catalogue, docs/RECON.md).
  */
 #ifndef DBXL_INPUT_H
 #define DBXL_INPUT_H

@@ -4,8 +4,9 @@
 plain `Makefile`, and GDB/MI underneath.
 
 **Source of truth:** the real xldb, observed on AIX 4.3.3 and recorded in
-`../recon/xldb-observed.md` (passes 1-17) with screenshots in `../recon/screens/` and the
-`../recon/pNN/` capture folders. How to run and record it: `docs/RECON.md`. Where that
+`docs/recon/xldb-observed.md` (passes 1-17). The screenshots (`screens/`) and capture folders
+(`pNN/`) it cites are kept outside the repository, in the reference folder's `recon/`. How
+to run and record it: `docs/RECON.md`. Where that
 document and the older reverse-engineered specs (`xldb-ui-reconstruction-spec.md`,
 `xldb-visual-archaeology.md`) or IBM's own help text disagree, **the observed behaviour wins**.
 Section references like *[obs p3]* point at the pass in that document.
@@ -123,11 +124,15 @@ dbxl-debugger/
     dbxl.help               dbxl's own help text (§10)
   tests/
     unit/                   mi_parse, format, commandlist, resources, search
-    progs/                  C test programs (ports of recon test.c / rich.c, plus threads,
-                            signals, deep stacks, long files)
+    progs/                  C test programs (test.c, rich.c, forky.c; mkcore.py)
+      aix/                  the same as hand-written PowerPC assembly, for the AIX guest
     visual/                 Xvfb harness, scripted interactions, reference PNGs
+  docs/recon/
+    xldb-observed.md        the recon findings, passes 1-17
+    bitmaps-decoded.txt     xldb's glyph, cursor and icon bitmaps
   tools/
-    xdiff.py                pixel diff / crop / zoom helpers (from recon/tools)
+    xdiff.py                pixel diff / crop / zoom helpers
+    recon/                  driving and recording the real xldb (docs/RECON.md)
 ```
 
 C11, `-Wall -Wextra -Wpedantic -Werror` in CI builds, no global mutable state outside
@@ -272,7 +277,7 @@ unmapped until there is a message.
 
 ### 5.4 Glyphs (`xtk/glyphs.c`)
 All bitmaps are recovered exactly from xldb's PutImage requests *[obs p10]* (bits in
-`recon/xtrace/bitmaps-decoded.txt`) and stored as C arrays:
+`docs/recon/bitmaps-decoded.txt`) and stored as C arrays:
 - **execution arrow** 32x16 (outer + inner shapes) at (2, line top). **Stop sign** 11x11
   (outer octagon, inner octagon) at (2, line top + 1), with fill `#fa1340`. **Disabled stop
   sign**: the same shapes with the background as fill. Stop sign first, arrow over it.
@@ -536,9 +541,10 @@ Locals, Globals and Monitor, so they survive stepping, re-expansion and Restart.
 
 ## 10. Help text
 `help/dbxl.help` is **dbxl's own text**, organised like xldb's help (same section numbering,
-`-->` link syntax, index, "copy help text to `$HOME/dbxl.help.text`"). IBM's text in
-`recon/xldb-h.txt` is IBM's copyrighted material. We use it to understand structure and
-behaviour, but we don't copy it into dbxl. `-h` prints the help to stdout.
+`-->` link syntax, index, "copy help text to `$HOME/dbxl.help.text`"). IBM's text (`xldb
+-h`, regenerated on the guest as `docs/recon/xldb-h.txt`, see `docs/RECON.md`) is IBM's
+copyrighted material. We use it to understand structure and behaviour, but we don't copy
+it into dbxl or commit it. `-h` prints the help to stdout.
 
 The Help window opens at the index. Only lines starting with `-->` are links; a link scrolls
 so the heading it names (section number optional, case ignored) is the top row. The title
@@ -568,7 +574,7 @@ so the heading it names (section number optional, case ignored) is the top row. 
 2. ~~Address width~~ **Decided** (2026-09-27): follows the target pointer size, see §6. 32-bit
    targets are planned for a later version.
 3. ~~x86-64 register groups~~ **Decided** (2026-09-27): see §6.1.
-4. **Remaining recon, by milestone** (details in `recon/xldb-observed.md`):
+4. **Remaining recon, by milestone** (details in `docs/recon/xldb-observed.md`):
 
    | Item | Status | Needed by |
    |---|---|---|
@@ -600,8 +606,8 @@ so the heading it names (section number optional, case ignored) is the top row. 
   xdotool interactions mirroring the recon scenarios (tests/progs ports of `test.c` and
   `rich.c`). Compare crops against `recon/screens/*` pixel by pixel, where content can match
   (chrome, menus, dialogs, value text). Report diffs as zoomed PNGs.
-- **Reference captures** stay in `../recon/`. Copy only the ones tests use into
-  `tests/visual/ref/`.
+- **Reference captures** stay outside the repository, in the reference folder's `recon/`.
+  Copy only the ones tests use into `tests/visual/ref/`.
 
 ## 14. Milestones
 1. **Skeleton:** Makefile, event loop, frame with stipple, panes with borders and titles,

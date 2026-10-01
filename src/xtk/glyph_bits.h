@@ -1,5 +1,5 @@
 /*
- * Generated from recon/xtrace/bitmaps-decoded.txt (xldb 1.2.1.0 PutImage data,
+ * Generated from docs/recon/bitmaps-decoded.txt (xldb 1.2.1.0 PutImage data,
  * recon pass 10).  # = set.  Do not edit by hand.
  */
 
