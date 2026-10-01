@@ -21,13 +21,20 @@ Paths below are relative to the top of this repository. The recon tools are in
 - The test programs are **hand-written PowerPC assembly** with XCOFF stabs, in this
   repository's `tests/progs/aix/`: `test.s` and `rich.s` mirror `tests/progs/test.c` and
   `rich.c`, the programs dbxl's tests debug on Linux. Copy them to the guest with
-  `tools/recon/push.py LOCAL REMOTE...` and build them there:
+  `tools/recon/push.py LOCAL REMOTE...`, together with the C files (xldb and dbx show
+  source from the current directory; without them Source stays empty), and build them
+  there:
 
   ```
   a=tests/progs/aix
-  tools/recon/push.py $a/test.s test.s $a/rich.s rich.s $a/build.sh build.sh
+  tools/recon/push.py $a/test.s test.s $a/rich.s rich.s $a/build.sh build.sh \
+      tests/progs/test.c test.c tests/progs/rich.c rich.c
   tools/recon/aix.py 'sh build.sh'
   ```
+
+  build-emulated-aix's `run.sh` starts every boot from a fresh copy of the image, so do this
+  after each start of the guest: only what is in the image (the `tester` account, the
+  `sys0` settings) survives a restart.
 
   `build.sh` links statically (`-bnso`), because xldb can't load AIX 4.3's shared-library
   archives. The stab placement rules that xldb accepts are in recon passes 2 and 4. (The

@@ -1346,3 +1346,40 @@ and xldb's exit status.
 - The terminated display also **clears the Subprograms highlight** (a Source click after
   choosing `area()` in Subprograms re-shows the terminated state without the cyan bar).
 - In core mode the new stop sign is first drawn offset (the pass 12 quirk), then corrected.
+
+# Recon pass 18: xldb 1.2.1.1 (dbxl#3)
+
+The guest now has the 1.2.1.1 update applied (`xldb.base` 1.2.1.1, APAR IX57186;
+`lpp.doc` is in `/usr/lpp/xldb/xldb.base/1.2.1.1/`). Date: 2026-10-01. Captures are in
+`v1211/` (`m3/` ... `m8/` replays, `m3dr/` and `m3ms/` for this pass).
+
+## Replaying the scenarios
+Every recorded scenario was replayed against 1.2.1.1 with `--wait 3` and compared with the
+1.2.1.0 references (the steps whose `tests/visual/ref` image is dbxl's own were compared with
+the original 1.2.1.0 captures in `m3ref/`).
+- M2, M4, M5, M6, M7 and M8 (core files): every step matches.
+- M3: every step matches except 05, 06 and 07 (Next, Return, Next after the Step that
+  should enter `add`). See below.
+- Core files need `fullcore` and `pre430core`, as with 1.2.1.0.
+
+## Stepping onto a breakpoint address hangs
+`xldb ./test`, with Disassembly and Registers open. The click on line 17 sets breakpoints at
+three addresses, `0x1004715c`, `0x1004718c` and `0x10047198` (both versions).
+
+| Action | IAR after | Notes |
+|---|---|---|
+| Continue (to the breakpoint) | `0x1004715c` (`li r0,0`) | `Breakpoint encountered.` |
+| Step | `0x10047164` (`b 0x10047198`) | two instructions, same line |
+| Next, Return, Next | `0x10047164` | no movement, no message, no bell |
+| Continue | `0x10047198` | `Breakpoint encountered.` |
+| Next | `0x10047168` | the loop's `bc` back to the body steps normally |
+| Next | `0x1004717c` | steps over `bl add` normally |
+
+Machine step from the breakpoint goes `0x1004715c`, `0x10047160`, `0x10047164`, then stays
+at `0x10047164`. So no stepping command gets past the `b` whose target has a breakpoint,
+while a branch to an address without one steps fine. 1.2.1.0 steps past it (its m3-05
+capture has the arrow on the next line). Not confirmed in isolation: the line breakpoint
+can't be split to try the same `b` without a breakpoint at its target.
+
+This looks like a 1.2.1.1 regression, probably from the "Step into shared-library
+functions" change. dbxl keeps 1.2.1.0's behaviour.
