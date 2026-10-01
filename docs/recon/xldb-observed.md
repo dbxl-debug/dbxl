@@ -1383,3 +1383,42 @@ can't be split to try the same `b` without a breakpoint at its target.
 
 This looks like a 1.2.1.1 regression, probably from the "Step into shared-library
 functions" change. dbxl keeps 1.2.1.0's behaviour.
+
+**Confirmed against 1.2.1.0 on the same guest** (`v1210/`, after `installp -r` as root,
+same boot and binaries). The M3 scenario matches the original `m3ref/` captures, 05-07
+included (01 and 11 differ only by `Warning: test.c is newer than test.`, from re-copying
+`test.c`). The same sequences:
+
+| Action | 1.2.1.0 IAR | 1.2.1.1 IAR |
+|---|---|---|
+| Step | `0x10047198` | `0x10047164` |
+| Next | `0x10047168` | `0x10047164` |
+| Return | `0x1004718c`, `Breakpoint encountered.` | `0x10047164` |
+| Next | `0x10047198` | `0x10047164` |
+| Machine step x4 | `160`, `164`, `198` (`Breakpoint encountered.`), `19c` | `160`, `164`, `164`, `164` |
+
+1.2.1.0 steps across the `b` onto the breakpoint address and reports it as a breakpoint hit.
+
+# Recon pass 19: tabs in Source, and `Tabsize` (1.2.1.1 and 1.2.1.0)
+
+1.2.1.1's help documents a new resource, `xldb.Tabsize: numeric value`: tabs in the source
+file are replaced by that many blanks, default 8. To compare, a tab-indented copy of `test.c`
+went on the guest (same 21 lines, with tabs after text and a line `a\tb\tc...`), and xldb ran
+as `-name tabx` with `tabx.Tabsize: N` in `~/.Xdefaults`. Date: 2026-10-01. Captures are in
+`v1211/tabsize/` and `v1210tab/` (1.2.1.0, after `installp -r` as root).
+
+Source columns where the text after each tab starts:
+
+| Line | 1.2.1.0 (any `Tabsize`) | 1.2.1.1 default | 1.2.1.1, 4 | 1.2.1.1, 3 | 1.2.1.1, 12 |
+|---|---|---|---|---|---|
+| `a\tb\tc` | 8, 16 | 9, 18 | 5, 10 | 4, 8 | 13, 26 |
+| `  \tcounter++;\t/* c */` | 8, 24 | 10, 28 | 6, 20 | 5, 18 | 14, 36 |
+| `\tint sum;\t/* s */` | 8, 24 | 8, 24 | 4, 16 | 3, 14 | 12, 32 |
+| `\tint i;\t\t/* i */` | 8, 24 | 8, 30 | 4, 18 | 3, 15 | 12, 42 |
+
+- **1.2.1.0** expands tabs to 8-column stops, as dbxl does (`src/core/source.c`), and
+  ignores `Tabsize`: the `Tabsize: 4` capture is identical to the default.
+- **1.2.1.1** replaces every tab with exactly N blanks wherever it falls, so its default
+  output differs from 1.2.1.0 for any tab after text. `Tabsize: 0` looks identical to 1.
+
+dbxl keeps 1.2.1.0's tab stops and has no `Tabsize` resource.
