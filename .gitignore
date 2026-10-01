@@ -7,3 +7,6 @@ __pycache__/
 /tests/progs/.dbxl.*
 /tests/progs/forky
 /tests/progs/core
+/tests/progs/aix/*.o
+/tests/progs/aix/test
+/tests/progs/aix/rich

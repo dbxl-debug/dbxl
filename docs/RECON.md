@@ -15,18 +15,21 @@ holds `recon/`, `AIX.md` and the install media.
 - xldb 1.2.1.0 is installed and on the PATH. `lslpp -l 'xldb*'` confirms the version.
 - There is no C compiler. The assembler and linker are installed (`bos.adt.base`,
   `bos.adt.syscalls`, `bos.adt.debug`, put on by `installp` as root).
-- The test programs are **hand-written PowerPC assembly** with XCOFF stabs:
-  `recon/testprog/test.s` and `rich.s`, which mirror `test.c` and `rich.c`. Build them on the
-  guest (copy with `recon/tools/push.py LOCAL REMOTE`):
+- The test programs are **hand-written PowerPC assembly** with XCOFF stabs, in this
+  repository's `tests/progs/aix/`: `test.s` and `rich.s` mirror `tests/progs/test.c` and
+  `rich.c`, the programs dbxl's tests debug on Linux. Copy them to the guest with
+  `recon/tools/push.py LOCAL REMOTE...` and build them there (from the reference folder,
+  with the repository checked out as `dbxl-debugger/`):
 
   ```
-  as -o rich.o rich.s
-  ld -o rich -bkeepfile:rich.o -bnso -bI:/usr/lib/syscalls.exp \
-     -bpT:0x10000000 -bpD:0x20000000 /usr/lib/crt0.o rich.o -lc
+  a=dbxl-debugger/tests/progs/aix
+  recon/tools/push.py $a/test.s test.s $a/rich.s rich.s $a/build.sh build.sh
+  recon/tools/aix.py 'sh build.sh'
   ```
 
-  Link statically (`-bnso`), because xldb can't load AIX 4.3's shared-library archives.
-  The stab placement rules that xldb accepts are in recon passes 2 and 4.
+  `build.sh` links statically (`-bnso`), because xldb can't load AIX 4.3's shared-library
+  archives. The stab placement rules that xldb accepts are in recon passes 2 and 4. (The
+  older recon passes ran the static `test.s` build as `./tests`; it is now `./test`.)
 - Root is needed for system settings. We don't log in as root; ask the user to run the
   command.
 

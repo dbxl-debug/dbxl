@@ -33,8 +33,10 @@ done
 fail=0
 
 # --- startup: default layout with no program -----------------------------
-# The pointer starts at the screen centre (640,512), inside Source, as in
-# the reference capture, so Source has the active (white) border.
+# The pointer is at the screen centre (640,512), inside Source, as in the
+# reference capture, so Source has the active (white) border.  As at the
+# other scales, it is moved out and back in once the window is up, so Source
+# gets an Enter however the start-up went.
 DISPLAY=$disp "$top/dbxl" >"$out/startup.log" 2>&1 &
 dbxl=$!
 i=0
@@ -42,6 +44,16 @@ until DISPLAY=$disp xwininfo -name dbxl >/dev/null 2>&1; do
     i=$((i + 1)); [ $i -gt 50 ] && { echo "dbxl window did not appear"; exit 1; }
     sleep 0.1
 done
+sleep 0.5
+DISPLAY=$disp python3 -c "
+import time
+from Xlib import display
+d = display.Display()
+d.screen().root.warp_pointer(0, 0)
+d.sync()
+time.sleep(0.3)
+d.screen().root.warp_pointer(640, 512)
+d.sync()"
 sleep 1
 PYTHONPATH="$top/tests/visual" python3 -c "from scenario import settled_grab; settled_grab('$disp').save('$out/startup.png')"
 
